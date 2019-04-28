@@ -1,0 +1,10 @@
+[package]
+name = "cards-rs-humanity"
+version = "0.1.0"
+authors = ["FireFlyForLife <maiko.s.99@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+actix = "0.7.9"
+actix-web = "0.7.19"
+env_logger = "0.6.1"

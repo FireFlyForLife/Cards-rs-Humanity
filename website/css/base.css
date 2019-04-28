@@ -1,0 +1,29 @@
+.blackCard {
+	background-color: #2F4F4F;
+	padding: 8px;
+	max-height: 400px;
+	max-width:  400px;
+	color: white;
+}
+
+#handOfCards {
+	background-color: lightblue;
+}
+
+.whiteCard {
+	max-height: 400px;
+	max-width:  200px;
+	background-color: lightgray;
+	margin: 15px 8px;
+	padding: 4px;
+	border: solid;
+	display: inline-block;
+}
+
+.selectedCard {
+	border-color: blue;
+}
+
+.submittedCard {
+	background-color: red;
+}
