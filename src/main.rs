@@ -1,20 +1,35 @@
 extern crate actix;
+extern crate serde;
+extern crate serde_json;
+#[macro_use]
+extern crate serde_derive;
 
-use actix_web::{server, App, HttpRequest, http, Result};
+use actix_web::{server, App, HttpRequest, HttpResponse, HttpMessage, http, Result};
 use actix_web::middleware::Logger;
 use actix_web::middleware::session::{RequestSession, SessionStorage, CookieSessionBackend};
 use actix_web::fs;
 use actix_web::fs::{NamedFile};
 
+use serde::Deserialize;
+
+use actix::prelude::*;
+use actix_web::{Json};
+use futures::future::Future;
+
+use bytes::Bytes;
+
 use std::cell::Cell;
 use std::path::Path;
+use std::str;
 
 // This struct represents state
 struct AppState {
     counter: Cell<usize>,
 }
 
-fn index(req: &HttpRequest<AppState>) -> Result<NamedFile> {
+type AppHttpRequest = HttpRequest<AppState>;
+
+fn index(req: &AppHttpRequest) -> Result<NamedFile> {
     // access session data
     if let Some(count) = req.session().get::<i32>("counter")? {
         println!("SESSION value: {}", count);
@@ -23,17 +38,30 @@ fn index(req: &HttpRequest<AppState>) -> Result<NamedFile> {
         req.session().set("counter", 1)?;
     }
 
-
     Ok( NamedFile::open(Path::new("website/index.html"))? )
-
-    // Ok("Welcome!")
 }
 
-fn counter_page(req: &HttpRequest<AppState>) -> String {
-    let count = req.state().counter.get() + 1; // <- get count
-    req.state().counter.set(count); // <- store new count in state
+#[derive(Debug, Serialize, Deserialize)]
+struct CardSubmittedPayload {
+    card_id: i64,
+}
 
-    format!("Request number: {}", count) // <- response with count
+fn card_submitted(body: Json<CardSubmittedPayload>) -> HttpResponse {
+    // let query = request.query();
+    // println!("query object: {:?}", query);
+    // println!("query body: {:?}", request.body().then(f: F));
+    //let value = serde_json::to_value(str::from_utf8(body.to_vec().as_slice()).unwrap()).unwrap();
+
+    // let card_id_option = query.get("cardId");
+    // if card_id_option.is_none() {
+        // return HttpResponse::new(http::StatusCode::from_u16(422u16).unwrap());
+    // }
+    // let card_id = card_id_option.unwrap();
+
+    // println!("{}", str::from_utf8(body.to_vec().as_slice()).unwrap());
+    println!("json body {:?}", body.card_id);
+
+    HttpResponse::new(http::StatusCode::from_u16(200u16).unwrap())
 }
 
 
@@ -57,6 +85,8 @@ fn main() {
             .handler(
                 "static", 
                 fs::StaticFiles::new(".").expect("Cannot read static files in directory '.'").show_files_listing())
+            // .route("submitCard", http::Method::POST, |req: AppHttpRequest| req.with )
+            .resource("submitCard", |r| r.method(http::Method::POST).with(card_submitted))
             .handler(
                 "/",
                 fs::StaticFiles::new("website").expect("Cannot read static files in directory 'website'").index_file("index.html"))

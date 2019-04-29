@@ -64,6 +64,40 @@ function submitSelection() {
 		selectedCard.classList.add("submittedCard");
 		hasSubmittedCard = true;
 		submitButton.disabled = true;
+
+		var payload = JSON.stringify( { card_id: 123321 } );
+		console.log("Sending over: " + payload);
+
+		$.ajax({
+		    url: 'submitCard',
+		    // dataType: 'json', //Omitted because jquery trips over itself it I put it in
+		    type: 'post',
+		    contentType: 'application/json',
+		    data: payload,
+		    processData: false,
+		})
+		.done(function( data, textStatus, jQxhr ) {
+			alert( "Submitted card response: " + jQxhr.status + " Data Loaded: '" + data + "'" );
+		})
+		.fail(function(request, status, error) {
+			alert("ERROR Submitting card. Some info: " + request.responseText + " + " + error + " + " + status);
+		})
+		.always(function() {
+			alert( "finished" );
+		});
+
+
+		// $.post( "submitCard", { cardId: 123321 })
+		// .done(function( data, textStatus, xhr ) {
+		// 	alert( "Submitted card response: " + xhr.status + " Data Loaded: '" + data + "'" );
+		// })
+		// .fail(function() {
+		// 	alert( "error" );
+		// })
+		// .always(function() {
+		// 	alert( "finished" );
+		// });
+
 	}
 }
 
