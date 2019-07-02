@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 
 use actix::prelude::*;
 use actix_web::{middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer};
+use actix_web::http::StatusCode;
 use actix_files as fs;
 use actix_web_actors::ws;
 use actix_session::{Session, CookieSession};
@@ -28,7 +29,9 @@ use actix_session::{Session, CookieSession};
 use uuid::Uuid;
 
 
-mod cah_server;
+pub mod cah_server;
+
+use cah_server::CardId;
 
 /// How often heartbeat pings are sent
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -49,7 +52,7 @@ fn session_get_uuid_or_default(session: &Session) -> Uuid{
             if session.set("uuid", uuid).is_ok() {
                 uuid
             } else {
-                //TODO: Should this panick here?
+                //TODO: Should this panic here?
                 debug_assert!(false);
                 Uuid::nil()
             }
@@ -58,10 +61,10 @@ fn session_get_uuid_or_default(session: &Session) -> Uuid{
 }
 
 /// do websocket handshake and start `MyWebSocket` actor
-fn ws_index(r: HttpRequest, stream: web::Payload, session: Session) -> Result<HttpResponse, Error> {
+fn ws_index(r: HttpRequest, stream: web::Payload, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>) -> Result<HttpResponse, Error> {
     println!("{:?}", r);
     let uuid = session_get_uuid_or_default(&session);
-    let res = ws::start(MyWebSocket::new(uuid), &r, stream);
+    let res = ws::start(MyWebSocket::new(uuid, server_address.get_ref().clone()), &r, stream);
     println!("{:?}", res.as_ref().unwrap());
     res
 }
@@ -73,6 +76,8 @@ struct MyWebSocket {
     /// otherwise we drop connection.
     hb: Instant,
     user_id: Uuid,
+    
+    server_addr: Addr<cah_server::CahServer>,
 }
 
 impl Actor for MyWebSocket {
@@ -104,9 +109,25 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for MyWebSocket {
             }
             ws::Message::Text(text) => {
                 if let Ok(json_message) = json::parse(&text) {
-                    if json_message["type"] == "submitCard" && json_message["card_id"].is_number() {
-                        println!("Player #{} has submitted card with id:{}", self.user_id, json_message["card_id"].as_number().unwrap());
+                    if !json_message["type"].is_string() {
+                        ctx.text(format!("{:?}", HttpResponse::build(StatusCode::BAD_REQUEST).reason("'type' is not available in json request").finish()));
                     }
+                    match json_message["type"].as_str().unwrap() {
+                        "submitCard" => {
+                            if json_message["card_id"].is_number() {
+                                let card_id: CardId = json_message["card_id"].as_number().unwrap().into();
+                                // println!("Player {} has submitted card with id:{}", self.user_id, json_message["card_id"].as_number().unwrap());
+                                let submit_card = cah_server::messages::SubmitCard{user_id: self.user_id, card_id: card_id};
+                                self.server_addr.do_send(submit_card);
+                            } else {
+                                ctx.text(format!("{:?}", HttpResponse::build(StatusCode::BAD_REQUEST).reason("'card_id' is not a 'number' available in json request").finish()));
+                            }
+                        }
+                        _ => {
+                            println!("Unknown type of message received in websocket. type: {}, only supported types: submitCard, connectMatch. Full json message: {}", json_message["type"].as_str().unwrap(), text);
+                        }
+                    }
+
                 } else {
                     ctx.text(text);
                 }
@@ -121,8 +142,8 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for MyWebSocket {
 }
 
 impl MyWebSocket {
-    fn new(user_id: Uuid) -> Self {
-        Self { hb: Instant::now(), user_id: user_id }
+    fn new(user_id: Uuid, server_addr: Addr<cah_server::CahServer>) -> Self {
+        Self { hb: Instant::now(), user_id: user_id, server_addr: server_addr }
     }
 
     /// helper method that sends ping to client every second.
@@ -148,7 +169,7 @@ impl MyWebSocket {
 }
 
 /// simple handle
-fn index(state: web::Data<Mutex<usize>>, req: HttpRequest) -> HttpResponse {
+fn counter_page(state: web::Data<Mutex<usize>>, req: HttpRequest) -> HttpResponse {
     println!("{:?}", req);
     *(state.lock().unwrap()) += 1;
 
@@ -161,21 +182,28 @@ fn main() -> io::Result<()> {
 
     let counter = web::Data::new(Mutex::new(0usize));
 
+    let sys = System::new("ws-example");
+    let server = cah_server::CahServer::default().start();
+
     //move is necessary to give closure below ownership of counter
     HttpServer::new(move || {
         App::new()
             .register_data(counter.clone()) // <- create app with shared state
+            .register_data(web::Data::new(server.clone()))
             .wrap(CookieSession::signed(&COOKIE_SIGNED_KEY) // <- create cookie based session middleware
                 .secure(false))
             // enable logger
             .wrap(middleware::Logger::default())
             
             // register simple handler, goto counter page
-            .service(web::resource("/counter").to(index))
+            .service(web::resource("/counter").to(counter_page))
+            // WebSocket connections go here
             .service(web::resource("/ws/").route(web::get().to(ws_index)))
             // the default website should display the index page located in the website folder and serve all css/js files relative to it.
             .service(fs::Files::new("/", "website").index_file("index.html"))
     })
     .bind("127.0.0.1:8080")?
-    .run()
+    .start();
+
+    sys.run()
 }

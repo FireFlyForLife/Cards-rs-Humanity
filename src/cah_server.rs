@@ -5,11 +5,69 @@
 use actix::prelude::*;
 use rand::{self, rngs::ThreadRng, Rng};
 use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
+
+use std::u64;
+
+pub type CardId = u64;
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct Card {
+    pub content: String,
+    pub id: CardId,
+}
+
+impl Card {
+    //TODO: I'm not sure if this is a good way if doing it
+
+    pub fn is_white_card(&self) -> bool {
+        return self.id < CardId::max_value()/2;
+    }
+
+    pub fn is_black_card(&self) -> bool {
+        return !self.is_white_card();
+    }
+}
+
+
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct CardDeck {
+    deck_name: String,
+    black_cards: Vec<Card>,
+    white_cards: Vec<Card>,
+}
+
+#[derive(Default)]
+pub struct Player {
+    name: String,
+    id: Uuid,
+}
+
+#[derive(Default)]
+pub struct DatabasePlayer {
+    player: Player,
+    email: String,
+    password_hash: u128, 
+}
+
+#[derive(Default)]
+pub struct Database {
+    card_decks: HashMap<String, CardDeck>,
+}
+
+pub struct Match {
+    players: Vec<Player>,
+    player_hands: HashMap<String, Vec<String>>,
+    player_submitted_card: HashMap<String, String>,
+}
 
 
 /// Message for chat server communications
-mod messages{
+pub mod messages{
     use actix::prelude::*;
+    use uuid::Uuid;
+    use crate::cah_server::CardId;
 
     /// Chat server sends this messages to session
     #[derive(Message)]
@@ -17,22 +75,22 @@ mod messages{
 
     /// New chat session is created
     #[derive(Message)]
-    #[rtype(usize)]
     pub struct Connect {
         pub addr: Recipient<Message>,
+        pub user_id: Uuid,
     }
 
     /// Session is disconnected
     #[derive(Message)]
     pub struct Disconnect {
-        pub id: usize,
+        pub id: Uuid,
     }
 
     /// Send message to specific room
     #[derive(Message)]
     pub struct ClientMessage {
         /// Id of the client session
-        pub id: usize,
+        pub id: Uuid,
         /// Peer message
         pub msg: String,
         /// Room name
@@ -50,24 +108,25 @@ mod messages{
     #[derive(Message)]
     pub struct Join {
         /// Client id
-        pub id: usize,
+        pub id: Uuid,
         /// Room name
         pub name: String,
     }
+
+    #[derive(Message)]
+    pub struct SubmitCard {
+        pub user_id: Uuid,
+        pub card_id: CardId,
+    }
 }
 
-#[derive(Default, Serialize, Deserialize)]
-pub struct CardDeck{
-    deck_name: String,
-    black_cards: Vec<String>,
-    white_cards: Vec<String>,
-}
 
 /// `ChatServer` manages chat rooms and responsible for coordinating chat
 /// session. implementation is super primitive
 pub struct CahServer {
-    sessions: HashMap<usize, Recipient<messages::Message>>,
-    rooms: HashMap<String, HashSet<usize>>,
+    sessions: HashMap<Uuid, Recipient<messages::Message>>,
+    rooms: HashMap<String, HashSet<Uuid>>,
+    database: Database,
     rng: ThreadRng,
 }
 
@@ -80,6 +139,7 @@ impl Default for CahServer {
         CahServer {
             sessions: HashMap::new(),
             rooms: rooms,
+            database: Default::default(),
             rng: rand::thread_rng(),
         }
     }
@@ -87,7 +147,7 @@ impl Default for CahServer {
 
 impl CahServer {
     /// Send message to all users in the room
-    fn send_message(&self, room: &str, message: &str, skip_id: usize) {
+    fn send_message(&self, room: &str, message: &str, skip_id: Uuid) {
         if let Some(sessions) = self.rooms.get(room) {
             for id in sessions {
                 if *id != skip_id {
@@ -111,23 +171,33 @@ impl Actor for CahServer {
 ///
 /// Register new session and assign unique id to this session
 impl Handler<messages::Connect> for CahServer {
-    type Result = usize;
+    type Result = ();
 
     fn handle(&mut self, msg: messages::Connect, _: &mut Context<Self>) -> Self::Result {
-        println!("Someone joined");
+        println!("{} is connecting", msg.user_id);
 
         // notify all users in same room
-        self.send_message(&"Main".to_owned(), "Someone joined", 0);
+        self.send_message(&"Main".to_owned(), "Someone joined", Uuid::nil());
 
-        // register session with random id
-        let id = self.rng.gen::<usize>();
-        self.sessions.insert(id, msg.addr);
+        // register session with uuid
+        self.sessions.insert(msg.user_id, msg.addr);
 
         // auto join session to Main room
-        self.rooms.get_mut(&"Main".to_owned()).unwrap().insert(id);
+        self.rooms.get_mut(&"Main".to_owned()).unwrap().insert(msg.user_id);
 
         // send id back
-        id
+        // msg.user_id
+    }
+}
+
+/// Handler for SubmitCard message
+///
+/// Register new session and assign unique id to this session
+impl Handler<messages::SubmitCard> for CahServer {
+    type Result = ();
+
+    fn handle(&mut self, msg: messages::SubmitCard, _: &mut Context<Self>) -> Self::Result {
+        println!("{} submitted the card: {}", msg.user_id, msg.card_id);
     }
 }
 
@@ -151,7 +221,7 @@ impl Handler<messages::Disconnect> for CahServer {
         }
         // send message to other users
         for room in rooms {
-            self.send_message(&room, "Someone disconnected", 0);
+            self.send_message(&room, "Someone disconnected", Uuid::nil());
         }
     }
 }
@@ -197,7 +267,7 @@ impl Handler<messages::Join> for CahServer {
         }
         // send message to other users
         for room in rooms {
-            self.send_message(&room, "Someone disconnected", 0);
+            self.send_message(&room, "Someone disconnected", Uuid::nil());
         }
 
         if self.rooms.get_mut(&name).is_none() {
