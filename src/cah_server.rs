@@ -289,9 +289,9 @@ impl Handler<messages::incomming::ListRooms> for CahServer {
     fn handle(&mut self, _: messages::incomming::ListRooms, _: &mut Context<Self>) -> Self::Result {
         let mut rooms = Vec::<String>::new();
 
-        // for key in self.rooms.keys() {
-        //     rooms.push(key.to_owned())
-        // }
+        for key in self.matches.keys() {
+            rooms.push(key.to_owned())
+        }
 
         MessageResult(rooms)
     }

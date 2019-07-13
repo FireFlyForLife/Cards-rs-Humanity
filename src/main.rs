@@ -29,6 +29,8 @@ use actix_session::{Session, CookieSession};
 
 use uuid::Uuid;
 
+use futures::{Future, Stream};
+
 
 pub mod cah_server;
 pub mod messages;
@@ -49,12 +51,12 @@ const COOKIE_SIGNED_KEY: [u8; 32] = [
 type CookieToken = Uuid;
 
 fn session_get_cookie_token_or_default(session: &Session) -> CookieToken {
-    match session.get::<CookieToken>("uuid"){
-        Ok(Some(uuid)) => { uuid },
+    match session.get::<CookieToken>("ct"){
+        Ok(Some(ct)) => { ct },
         _ => { 
-            let uuid = CookieToken::new_v4();
-            if session.set("uuid", uuid).is_ok() {
-                uuid
+            let ct = CookieToken::new_v4();
+            if session.set("ct", ct).is_ok() {
+                ct
             } else {
                 //TODO: Should this panic here?
                 debug_assert!(false);
@@ -71,6 +73,35 @@ fn ws_index(r: HttpRequest, stream: web::Payload, session: Session, server_addre
     let res = ws::start(MyWebSocket::new(cookie_token, server_address.get_ref().clone()), &r, stream);
     println!("{:?}", res.as_ref().unwrap());
     res
+}
+
+fn get_list_rooms(r: HttpRequest, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {
+    println!("{:?}", r);
+    // *(state.lock().unwrap()) += 1;
+    
+    let token = session_get_cookie_token_or_default(&session);
+    
+    server_address.send(messages::incomming::ListRooms{cookie_token: token})
+        .map_err(Error::from)
+        .map( |matches| { HttpResponse::Ok().body(json::stringify(matches)) })
+
+    // let post_response = client
+    //     .post("https://httpbin.org/post")
+    //     .send_json(&data)
+    //     .map_err(Error::from) // <- convert SendRequestError to an Error
+    //     .and_then(|resp| {
+    //         resp.from_err()
+    //             .fold(BytesMut::new(), |mut acc, chunk| {
+    //                 acc.extend_from_slice(&chunk);
+    //                 Ok::<_, Error>(acc)
+    //             })
+    //             .map(|body| {
+    //                 let body: HttpBinResponse = serde_json::from_slice(&body).unwrap();
+    //                 body.json
+    //             })
+    //     });
+
+    // HttpResponse::Ok().body(format!("Num of requests: {}", state.lock().unwrap()))
 }
 
 /// websocket connection is long running connection, it easier
@@ -214,6 +245,8 @@ fn main() -> io::Result<()> {
             .service(web::resource("/counter").to(counter_page))
             // WebSocket connections go here
             .service(web::resource("/ws/").route(web::get().to(ws_index)))
+            .service(web::scope("/api/")
+                .service(web::resource("/list_matches").route(web::get().to_async(get_list_rooms))))
             // the default website should display the index page located in the website folder and serve all css/js files relative to it.
             .service(fs::Files::new("/", "website").index_file("index.html"))
     })

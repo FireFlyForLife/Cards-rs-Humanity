@@ -32,8 +32,10 @@ pub mod incomming {
     }
 
     /// List of available rooms request, this doesn't need to be over a websocket actually.
-    pub struct ListRooms;
-
+    #[derive(Default)]
+    pub struct ListRooms{
+        pub cookie_token: CookieToken,
+    }
     impl actix::Message for ListRooms {
         type Result = Vec<String>;
     }
@@ -61,12 +63,6 @@ pub mod outgoing {
     /// Chat server sends this messages to session
     #[derive(Message)]
     pub struct Message(pub String);
-
-    /// Response to List of available rooms request, this doesn't need to be over a websocket actually.
-    pub struct ListRooms;
-    impl actix::Message for ListRooms {
-        type Result = Vec<String>;
-    }
 
     #[derive(Message)]
     pub struct AddCardToHand {

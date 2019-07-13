@@ -1,5 +1,4 @@
 var handOfCardsContainer = null;
-//~~type: List<Pair<cardId, cardElement>>~~
 //type: HashMap<cardElement, cardId>
 var handOfCards = {};
 var hasSubmittedCard = false;
@@ -57,6 +56,23 @@ var incommingMessages = {
 	}
 };
 
+// send a GET request to the server.
+//
+// @returns ajax request returning a String[] of all matches
+function sendListMatches() {
+	var req = $.ajax({
+		url: 'api/list_matches',
+		type: 'get',
+	})
+	.done(function( data, textStatus, jQxhr ) {
+		console.log( "received list_matches response: " + jQxhr.status + " Data Loaded: '" + data + "'" );
+	})
+	.fail(function(request, status, error) {
+		alert("ERROR listing all matches. Some info: " + request.responseText + " + " + error + " + " + status);
+	})
+
+	return req;
+}
 
 class ServerSocketConnection {
 	socketConnection = null;
@@ -82,13 +98,6 @@ class ServerSocketConnection {
 		var message = {type: "revealCard", card_id: revealCard.cardId};
 		var messageJson = JSON.stringify(message);
 		
-		this.socketConnection.send(messageJson);
-	}
-
-	sendListMatches() {
-		var message = {type: "listMatches"};
-		var messageJson = JSON.stringify(message);
-
 		this.socketConnection.send(messageJson);
 	}
 
@@ -234,6 +243,23 @@ function addWhiteCard(msg) {
 	}
 
 	handOfCardsContainer.appendChild(card);
+}
+
+function refreshMatchList() {
+	var ajaxReq = sendListMatches();
+	ajaxReq.done(function( data ) {
+		//alert( "refreshing match list with " + data );
+		var json = JSON.parse(data);
+		if(json == null || !Array.isArray(json)) {
+			console.error("refreshMatchList response was received, but the data is not valid json. or json is not an array. Ignoring response");
+			return;
+		}
+
+		// var originalMatches = $("#matches").html();
+		var originalMatches = "";
+		$.each(json, function(i, val) {originalMatches += val + "<br>"});
+		$("#matches").html(originalMatches);
+	})
 }
 
 window.onload = function () {
