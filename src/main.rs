@@ -13,7 +13,8 @@
 
 #[macro_use]
 extern crate serde_derive;
-
+#[macro_use]
+extern crate log;
 
 use std::io;
 use std::sync::Mutex;
@@ -30,6 +31,7 @@ use uuid::Uuid;
 
 
 pub mod cah_server;
+pub mod messages;
 
 use cah_server::CardId;
 
@@ -44,17 +46,19 @@ const COOKIE_SIGNED_KEY: [u8; 32] = [
     0,  9,  0,  0,  5,  0,  53,  0,
     8,  0,  0,  0,  0,  32,  0,  0];
 
-fn session_get_uuid_or_default(session: &Session) -> Uuid{
-    match session.get::<Uuid>("uuid"){
+type CookieToken = Uuid;
+
+fn session_get_cookie_token_or_default(session: &Session) -> CookieToken {
+    match session.get::<CookieToken>("uuid"){
         Ok(Some(uuid)) => { uuid },
         _ => { 
-            let uuid = Uuid::new_v4();
+            let uuid = CookieToken::new_v4();
             if session.set("uuid", uuid).is_ok() {
                 uuid
             } else {
                 //TODO: Should this panic here?
                 debug_assert!(false);
-                Uuid::nil()
+                CookieToken::nil()
             }
         }
     }
@@ -63,8 +67,8 @@ fn session_get_uuid_or_default(session: &Session) -> Uuid{
 /// do websocket handshake and start `MyWebSocket` actor
 fn ws_index(r: HttpRequest, stream: web::Payload, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>) -> Result<HttpResponse, Error> {
     println!("{:?}", r);
-    let uuid = session_get_uuid_or_default(&session);
-    let res = ws::start(MyWebSocket::new(uuid, server_address.get_ref().clone()), &r, stream);
+    let cookie_token = session_get_cookie_token_or_default(&session);
+    let res = ws::start(MyWebSocket::new(cookie_token, server_address.get_ref().clone()), &r, stream);
     println!("{:?}", res.as_ref().unwrap());
     res
 }
@@ -75,9 +79,18 @@ struct MyWebSocket {
     /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
     /// otherwise we drop connection.
     hb: Instant,
-    user_id: Uuid,
+    cookie_token: CookieToken,
     
     server_addr: Addr<cah_server::CahServer>,
+}
+
+/// Handle messages from chat server, we simply send it to peer websocket
+impl Handler<messages::outgoing::Message> for MyWebSocket {
+    type Result = ();
+
+    fn handle(&mut self, msg: messages::outgoing::Message, ctx: &mut Self::Context) {
+        ctx.text(msg.0);
+    }
 }
 
 impl Actor for MyWebSocket {
@@ -86,10 +99,12 @@ impl Actor for MyWebSocket {
     /// Method is called on actor start. We start the heartbeat process here.
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
+
+        let addr = ctx.address();
+        self.server_addr.do_send(messages::incomming::Connect{addr: addr.recipient(), token: self.cookie_token.clone()});
     }
 
     fn stopping(&mut self, _context: &mut Self::Context) -> Running {
-
         Running::Stop
     }
 }
@@ -117,7 +132,7 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for MyWebSocket {
                             if json_message["card_id"].is_number() {
                                 let card_id: CardId = json_message["card_id"].as_number().unwrap().into();
                                 // println!("Player {} has submitted card with id:{}", self.user_id, json_message["card_id"].as_number().unwrap());
-                                let submit_card = cah_server::messages::SubmitCard{user_id: self.user_id, card_id: card_id};
+                                let submit_card = messages::incomming::SubmitCard{token: self.cookie_token, card_id: card_id};
                                 self.server_addr.do_send(submit_card);
                             } else {
                                 ctx.text(format!("{:?}", HttpResponse::build(StatusCode::BAD_REQUEST).reason("'card_id' is not a 'number' available in json request").finish()));
@@ -142,8 +157,8 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for MyWebSocket {
 }
 
 impl MyWebSocket {
-    fn new(user_id: Uuid, server_addr: Addr<cah_server::CahServer>) -> Self {
-        Self { hb: Instant::now(), user_id: user_id, server_addr: server_addr }
+    fn new(token: CookieToken, server_addr: Addr<cah_server::CahServer>) -> Self {
+        Self { hb: Instant::now(), cookie_token: token, server_addr: server_addr }
     }
 
     /// helper method that sends ping to client every second.

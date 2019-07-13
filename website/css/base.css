@@ -27,3 +27,7 @@
 .submittedCard {
 	background-color: red;
 }
+
+#userList {
+	border-style: solid;
+}
