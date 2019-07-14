@@ -24,6 +24,10 @@
 	border-color: blue;
 }
 
+.divBorder {
+	border-style: solid;
+}
+
 .submittedCard {
 	background-color: red;
 }

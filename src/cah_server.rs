@@ -106,19 +106,6 @@ impl Default for CahServer {
 }
 
 impl CahServer {
-    /// Send message to all users in the room
-    // fn send_message(&self, room: &str, message: &str, skip_id: Uuid) {
-    //     if let Some(sessions) = self.rooms.get(room) {
-    //         for id in sessions {
-    //             if *id != skip_id {
-    //                 if let Some(addr) = self.sessions.get(id) {
-    //                     let _ = addr.do_send(messages::Message(message.to_owned()));
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-
     //TODO: Optimize
     fn get_room_from_uuid(&self, user_id: &Uuid) -> Option<String> {
         for room in self.matches.iter() {
@@ -157,6 +144,22 @@ impl Actor for CahServer {
     /// We are going to use simple Context, we just need ability to communicate
     /// with other actors.
     type Context = Context<Self>;
+}
+
+impl Handler<messages::incomming::RegisterAccount> for CahServer {
+    type Result = Result<(), String>;
+
+    fn handle(&mut self, msg: messages::incomming::RegisterAccount, ctx: &mut Context<Self>) -> Self::Result {
+        Err("Unimplemented!".to_owned())
+    }
+}
+
+impl Handler<messages::incomming::Login> for CahServer {
+    type Result = Result<CookieToken, String>;
+
+    fn handle(&mut self, msg: messages::incomming::Login, ctx: &mut Context<Self>) -> Self::Result {
+        Err("Unimplemented!".to_owned())
+    }
 }
 
 /// Handler for Connect message.

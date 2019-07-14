@@ -327,6 +327,44 @@ function submitSelection() {
 	}
 }
 
+function onClickLogin() {
+	//TODO: This should be send by https which makes this safe right??
+	var username = $("#usernameField").text();
+	var password = $("#passwordField").text();
+	console.log("Logging in with username: " + username);
+	var payload = {username: username, pass: password};
+	$.ajax({
+		    url: 'api/login',
+		    type: 'post',
+		    data: payload
+		})
+		.done(function( data, textStatus, jQxhr ) {
+			alert( "onlogin response: " + jQxhr.status + " Data Loaded: '" + data + "'" );
+		})
+		.fail(function(request, status, error) {
+			alert("ERROR onlogin. '" + error + "' with reason: '" + request.responseText + "'. response status: '" + status + "'");
+		})
+}
+
+function onClickRegister() {
+	//TODO: This should be send by https which makes this safe right??
+	var username = $("#usernameField").text();
+	var password = $("#passwordField").text();
+	console.log("Logging in with username: " + username);
+	var payload = {username: username, pass: password};
+	$.ajax({
+			url: 'api/register',
+			type: 'post',
+			data: payload
+		})
+		.done(function( data, textStatus, jQxhr ) {
+			alert( "onregister response: " + jQxhr.status + " Data Loaded: '" + data + "'" );
+		})
+		.fail(function(request, status, error) {
+			alert("ERROR onregister. Some info: " + request.responseText + " + " + error + " + " + status);
+		})
+}
+
 function newRoundStarts() {
 	hasSubmittedCard = false;
 	submitButton.disabled = false;

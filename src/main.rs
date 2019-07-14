@@ -30,6 +30,7 @@ use actix_session::{Session, CookieSession};
 use uuid::Uuid;
 
 use futures::{Future, Stream};
+use futures::future::{ok, err};
 
 
 pub mod cah_server;
@@ -76,33 +77,60 @@ fn ws_index(r: HttpRequest, stream: web::Payload, session: Session, server_addre
 }
 
 fn get_list_rooms(r: HttpRequest, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {
-    println!("{:?}", r);
-    // *(state.lock().unwrap()) += 1;
-    
     let token = session_get_cookie_token_or_default(&session);
     
     server_address.send(messages::incomming::ListRooms{cookie_token: token})
         .map_err(Error::from)
         .map( |matches| { HttpResponse::Ok().body(json::stringify(matches)) })
-
-    // let post_response = client
-    //     .post("https://httpbin.org/post")
-    //     .send_json(&data)
-    //     .map_err(Error::from) // <- convert SendRequestError to an Error
-    //     .and_then(|resp| {
-    //         resp.from_err()
-    //             .fold(BytesMut::new(), |mut acc, chunk| {
-    //                 acc.extend_from_slice(&chunk);
-    //                 Ok::<_, Error>(acc)
-    //             })
-    //             .map(|body| {
-    //                 let body: HttpBinResponse = serde_json::from_slice(&body).unwrap();
-    //                 body.json
-    //             })
-    //     });
-
-    // HttpResponse::Ok().body(format!("Num of requests: {}", state.lock().unwrap()))
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LoginRequestPayload {
+    //TODO: Limit lengths characters and stuff
+    pub username: String,
+    pub password: String,
+}
+
+fn post_page_login(r: HttpRequest, payload: web::Payload, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {
+    payload.concat2().map_err(Error::from).and_then(move |body|{
+
+        // let jsonBodyResult = match serde_json::from_slice::<serde_json::Value>(body.as_ref()) {
+        //     Ok(js) => { js },
+        //     Err(error) => { 
+        //         println!("Error receiving payload from login! error: '{:?}'", error); 
+        //         return ok(HttpResponse::build(StatusCode::BAD_REQUEST).reason("Could not parse payload to a json").finish()); 
+        //     },
+        // };
+        let login_request_result = serde_json::from_slice::<LoginRequestPayload>(body.as_ref());
+        if login_request_result.is_ok() {
+            let login_request = login_request_result.unwrap();
+
+            server_address.send(messages::incomming::Login{username_or_email: login_request.username, password: login_request.password})
+                .map_err(Error::from)
+                .map( |matches| {
+                    match matches {
+                        Ok(cookie_token) => HttpResponse::Ok().body(cookie_token.to_string()),
+                        Err(error_message) =>  HttpResponse::build(StatusCode::UNAUTHORIZED).body(error_message)
+                    }
+                })
+        } else {
+            err(HttpResponse::build(StatusCode::UNAUTHORIZED).reason("Couldn't parse json request body").finish())
+        }
+    })
+}
+
+// fn post_page_register(r: HttpRequest, payload: web::Payload, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {
+//     // let token = session_get_cookie_token_or_default(&session);
+    
+//     // server_address.send(messages::incomming::ListRooms{cookie_token: token})
+//     //     .map_err(Error::from)
+//     //     .map( |matches| { HttpResponse::Ok().body(json::stringify(matches)) })
+//     payload.concat2().map_err(Error::from).map( |body| {
+//         server_address.send(messages::incomming::RegisterAccount{email: "emailTest".to_owned(), username: "usrnmTest".to_owned(), password: "123".to_owned()})
+//             .map_err(Error::from)
+//             .map( |matches| { HttpResponse::Ok().body(json::stringify(matches)) })
+//     })
+// }
 
 /// websocket connection is long running connection, it easier
 /// to handle with an actor
@@ -245,8 +273,10 @@ fn main() -> io::Result<()> {
             .service(web::resource("/counter").to(counter_page))
             // WebSocket connections go here
             .service(web::resource("/ws/").route(web::get().to(ws_index)))
-            .service(web::scope("/api/")
-                .service(web::resource("/list_matches").route(web::get().to_async(get_list_rooms))))
+            .service( web::scope("/api/")
+                .service(web::resource("/list_matches").route(web::get().to_async(get_list_rooms)))
+                .service(web::resource("/login").route(web::post().to_async(post_page_login))) )
+                // .service(web::resource("/register").route(web::post().to_async(get_list_rooms))) )
             // the default website should display the index page located in the website folder and serve all css/js files relative to it.
             .service(fs::Files::new("/", "website").index_file("index.html"))
     })

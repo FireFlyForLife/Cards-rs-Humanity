@@ -2,6 +2,8 @@ use crate::cah_server::{Card, CardId, Player};
 use crate::CookieToken;
 use actix::prelude::*;
 use uuid::Uuid;
+use std::error::Error;
+use std::string::String;
 
 // Containing all messages which will be commin in from a client to the server
 pub mod incomming {
@@ -12,6 +14,27 @@ pub mod incomming {
     pub struct Connect {
         pub addr: Recipient<outgoing::Message>,
         pub token: CookieToken,
+    }
+
+    // #[derive(Message)]
+    // #[rtype(result="Error<(), String>")]
+    pub struct RegisterAccount {
+        pub email: String,
+        pub username: String,
+        pub password: String,
+    }
+    impl actix::Message for RegisterAccount {
+        type Result = Result<(), String>;
+    }
+
+    // #[derive(Message)]
+    // #[rtype(result="Error<CookieToken, String>")]
+    pub struct Login {
+        pub username_or_email: String,
+        pub password: String,
+    }
+    impl actix::Message for Login {
+        type Result = Result<CookieToken, String>;
     }
 
     /// Session is disconnected
