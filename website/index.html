@@ -10,6 +10,7 @@
 
   <link rel="stylesheet" href="css/base.css">
   <script type="text/javascript" src="js/jquery-3.4.0.js"></script>
+  <script type="text/javascript" src="js/jquery.form.js"></script>
   <script type="text/javascript" src="js/signals.js"></script>
   <script type="text/javascript" src="js/CardsAgainstHumanity.js"></script>
 </head>
@@ -19,11 +20,25 @@
 
   <div class="divBorder">
     Login screen:<br>
-    <label for="usernameField">Username:</label>
-    <input type="text" id="usernameField"></input><br>
-    <label for="passwordField">Password:</label>
-    <input type="password" id="passwordField"></input><br>
-    <button onclick="onClickLogin()">Login</button><button onclick="onClickRegister()">Register</button>
+    <form id="loginForm" action="api/login", method="post">
+      <label for="usernameField">Username/Email:</label>
+      <input type="text" id="usernameField" name="username"><br>
+      <label for="passwordField">Password:</label>
+      <input type="password" id="passwordField" name="password"><br>
+      <input type="submit" value="Login">
+      <!-- <button onclick="onClickLogin()">Login</button> -->
+    </form>
+    <br><br>
+    Register screen:
+    <form id="registerForm" action="api/register", method="post">
+      <label for="emailField">Email:</label>
+      <input type="text" id="emailField" name="email"><br>
+      <label for="usernameField">Username:</label>
+      <input type="text" id="usernameField" name="username"><br>
+      <label for="passwordField">Password:</label>
+      <input type="password" id="passwordField" name="password"><br>
+      <input type="submit" value="Register">
+    </form>
   </div>
 
   Match list:

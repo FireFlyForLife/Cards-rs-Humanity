@@ -274,6 +274,23 @@ window.onload = function () {
 	// addWhiteCard("White card from JS #2");
 	// addWhiteCard("White card from JS #3");
 	// addWhiteCard("White card from JS #4");
+
+	$('#loginForm').ajaxForm({
+		success: function() {
+			alert("Thank you for your login!");
+		},
+		error: function(request, status, error) {
+			alert("ERROR on login. Some info: " + request.responseText + " + " + error + " + " + status);
+		}
+	});
+	$('#registerForm').ajaxForm({
+		success: function() {
+			alert("Thank you for your registering!");
+		},
+		error: function(request, status, error) {
+			alert("ERROR onregister. Some info: " + request.responseText + " + " + error + " + " + status);
+		}
+	});
 }
 
 function getSelectedCard() {
@@ -332,12 +349,14 @@ function onClickLogin() {
 	var username = $("#usernameField").text();
 	var password = $("#passwordField").text();
 	console.log("Logging in with username: " + username);
-	var payload = {username: username, pass: password};
-	$.ajax({
-		    url: 'api/login',
-		    type: 'post',
-		    data: payload
-		})
+	var payload = {username: username, password: password};
+	$.post('api/login', $('#loginForm').serialize())
+	// $.ajax({
+	// 	    url: 'api/login',
+	// 	    type: 'post',
+	// 		data: $("loginForm").serialize(),//JSON.stringify(payload),
+	// 		contentType: 'application/x-www-form-urlencoded',
+	// 	})
 		.done(function( data, textStatus, jQxhr ) {
 			alert( "onlogin response: " + jQxhr.status + " Data Loaded: '" + data + "'" );
 		})

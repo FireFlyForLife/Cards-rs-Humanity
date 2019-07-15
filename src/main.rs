@@ -91,46 +91,38 @@ pub struct LoginRequestPayload {
     pub password: String,
 }
 
-fn post_page_login(r: HttpRequest, payload: web::Payload, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {
-    payload.concat2().map_err(Error::from).and_then(move |body|{
-
-        // let jsonBodyResult = match serde_json::from_slice::<serde_json::Value>(body.as_ref()) {
-        //     Ok(js) => { js },
-        //     Err(error) => { 
-        //         println!("Error receiving payload from login! error: '{:?}'", error); 
-        //         return ok(HttpResponse::build(StatusCode::BAD_REQUEST).reason("Could not parse payload to a json").finish()); 
-        //     },
-        // };
-        let login_request_result = serde_json::from_slice::<LoginRequestPayload>(body.as_ref());
-        if login_request_result.is_ok() {
-            let login_request = login_request_result.unwrap();
-
-            server_address.send(messages::incomming::Login{username_or_email: login_request.username, password: login_request.password})
-                .map_err(Error::from)
-                .map( |matches| {
-                    match matches {
-                        Ok(cookie_token) => HttpResponse::Ok().body(cookie_token.to_string()),
-                        Err(error_message) =>  HttpResponse::build(StatusCode::UNAUTHORIZED).body(error_message)
-                    }
-                })
-        } else {
-            err(HttpResponse::build(StatusCode::UNAUTHORIZED).reason("Couldn't parse json request body").finish())
-        }
-    })
+fn post_page_login(_r: HttpRequest, body: web::Form<LoginRequestPayload>, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {
+    server_address.send(messages::incomming::Login{username_or_email: body.username.clone(), password: body.password.clone()})
+        .map_err(Error::from)
+        .map(move |matches| {
+            match matches {
+                Ok(cookie_token) => {
+                    let _cookie_succeeded = session.set("ct", cookie_token);
+                    HttpResponse::Ok().body(cookie_token.to_string()) 
+                },
+                Err(error_message) =>  HttpResponse::build(StatusCode::UNAUTHORIZED).body(error_message)
+            }
+        })
 }
 
-// fn post_page_register(r: HttpRequest, payload: web::Payload, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {
-//     // let token = session_get_cookie_token_or_default(&session);
-    
-//     // server_address.send(messages::incomming::ListRooms{cookie_token: token})
-//     //     .map_err(Error::from)
-//     //     .map( |matches| { HttpResponse::Ok().body(json::stringify(matches)) })
-//     payload.concat2().map_err(Error::from).map( |body| {
-//         server_address.send(messages::incomming::RegisterAccount{email: "emailTest".to_owned(), username: "usrnmTest".to_owned(), password: "123".to_owned()})
-//             .map_err(Error::from)
-//             .map( |matches| { HttpResponse::Ok().body(json::stringify(matches)) })
-//     })
-// }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RegisterRequestPayload {
+    //TODO: Limit lengths characters and stuff
+    pub email: String,
+    pub username: String,
+    pub password: String,
+}
+
+fn post_page_register(r: HttpRequest, body: web::Form<RegisterRequestPayload>, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {
+    server_address.send(messages::incomming::RegisterAccount{email: body.email.clone(), username: body.username.clone(), password: body.password.clone()})
+        .map_err(Error::from)
+        .map( |matches| {
+            match matches {
+                Ok(()) => HttpResponse::Ok().body("Succesfully registered!"),
+                Err(error_message) =>  HttpResponse::build(StatusCode::UNAUTHORIZED).body(error_message)
+            }
+        })
+}
 
 /// websocket connection is long running connection, it easier
 /// to handle with an actor
@@ -275,8 +267,8 @@ fn main() -> io::Result<()> {
             .service(web::resource("/ws/").route(web::get().to(ws_index)))
             .service( web::scope("/api/")
                 .service(web::resource("/list_matches").route(web::get().to_async(get_list_rooms)))
-                .service(web::resource("/login").route(web::post().to_async(post_page_login))) )
-                // .service(web::resource("/register").route(web::post().to_async(get_list_rooms))) )
+                .service(web::resource("/login").route(web::post().to_async(post_page_login)))
+                .service(web::resource("/register").route(web::post().to_async(post_page_register))) )
             // the default website should display the index page located in the website folder and serve all css/js files relative to it.
             .service(fs::Files::new("/", "website").index_file("index.html"))
     })

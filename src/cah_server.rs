@@ -7,12 +7,19 @@ use rand::{self, rngs::ThreadRng, Rng};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 use json::JsonValue;
+use std::sync::RwLock;
 
 use std::u64;
 use crate::CookieToken;
 use crate::messages;
 
+use sha2::Sha512;
+use sha2::Digest;
+use generic_array::GenericArray;
+
 pub type CardId = u64;
+type ShaImpl = Sha512;
+type PasswordHash = GenericArray<u8, <ShaImpl as Digest>::OutputSize>;
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct Card {
@@ -41,17 +48,17 @@ pub struct CardDeck {
     white_cards: Vec<Card>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Player {
     name: String,
     id: Uuid,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct DatabasePlayer {
     player: Player,
     email: String,
-    password_hash: u128, 
+    password_hash: PasswordHash, 
 }
 
 #[derive(Default)]
@@ -83,9 +90,9 @@ pub struct Match {
 pub struct CahServer {
     socket_actors: HashMap<CookieToken, Recipient<messages::outgoing::Message>>,
     // The cookie token to player Uuid, the Uuid is the reprisentation internally.
-    sessions: HashMap<CookieToken, Uuid>, //TODO: Clear sessins after a couple hours/days, so the ram doesn't quitely go downwards.
+    sessions: RwLock<HashMap<CookieToken, Uuid>>, //TODO: Clear sessins after a couple hours/days, so the ram doesn't quitely go downwards.
     matches: HashMap<String, Match>,
-    database: Database,
+    database: RwLock<Database>,
     rng: ThreadRng,
 }
 
@@ -97,7 +104,7 @@ impl Default for CahServer {
 
         CahServer {
             socket_actors: HashMap::new(),
-            sessions: HashMap::new(),
+            sessions: Default::default(),
             matches: matches,
             database: Default::default(),
             rng: rand::thread_rng(),
@@ -121,7 +128,7 @@ impl CahServer {
 
     //TODO: Optimize
     fn get_cookie_token_from_user_id(&self, user_id: &Uuid) -> Option<CookieToken> {
-        for token_and_uuid in self.sessions.iter() {
+        for token_and_uuid in self.sessions.read().unwrap().iter() {
             let (token, uuid) = token_and_uuid;
             if uuid == user_id {
                 return Some(token.clone());
@@ -132,7 +139,7 @@ impl CahServer {
     }
 
     fn get_user_id(&self, cookie_token: &CookieToken) -> Option<Uuid> {
-        match self.sessions.get(cookie_token) {
+        match self.sessions.read().unwrap().get(cookie_token) {
             Some(uuid) => Some(uuid.clone()),
             None => None,
         }
@@ -146,19 +153,61 @@ impl Actor for CahServer {
     type Context = Context<Self>;
 }
 
+fn hash_password(username: &str, password: &str) -> PasswordHash {
+    let mut total_string = String::with_capacity(username.len() + password.len());
+    total_string.push_str(username);
+    total_string.push_str(password);
+
+    let mut sha =  ShaImpl::new();
+    sha.input(total_string);
+    sha.result()
+}
+
 impl Handler<messages::incomming::RegisterAccount> for CahServer {
     type Result = Result<(), String>;
 
-    fn handle(&mut self, msg: messages::incomming::RegisterAccount, ctx: &mut Context<Self>) -> Self::Result {
-        Err("Unimplemented!".to_owned())
+    fn handle(&mut self, msg: messages::incomming::RegisterAccount, _ctx: &mut Context<Self>) -> Self::Result {
+        if let Some(db_player) = self.database.read().unwrap().players.iter().find(|&db_player| db_player.email == msg.email || db_player.player.name == msg.username) {
+            return if db_player.email == msg.email {
+                Err("User already exists with email".to_owned())
+            } else { // we only check for email and username, so username should be equal here.
+                Err("User already exists with username".to_owned())
+            };
+        }
+
+        let password_hash = hash_password(&msg.username, &msg.password);
+        let new_db_player = DatabasePlayer{player: Player{name: msg.username, id: Uuid::new_v4()}, email: msg.email, password_hash: password_hash};
+        println!("Registering new user: {:?}", &new_db_player);
+        self.database.get_mut().unwrap().players.push(new_db_player);
+
+        Ok(())
+        
     }
 }
 
 impl Handler<messages::incomming::Login> for CahServer {
     type Result = Result<CookieToken, String>;
 
+    //TODO: How to handle two people fighting over a account?
     fn handle(&mut self, msg: messages::incomming::Login, ctx: &mut Context<Self>) -> Self::Result {
-        Err("Unimplemented!".to_owned())
+        let db = self.database.get_mut().unwrap();
+        if let Some(db_player) = db.players.iter().find(|&db_player| db_player.player.name == msg.username_or_email || db_player.email == msg.username_or_email) {
+            let password_hash = hash_password(&db_player.player.name, &msg.password);
+            if password_hash == db_player.password_hash {
+                let sessions = self.sessions.get_mut().unwrap();
+                let player_id = db_player.player.id.clone();
+                //TODO: Optimize this, there can only be one.
+                sessions.retain(|&key, &mut value| value != player_id);
+                let new_cookie_token = CookieToken::new_v4();
+                sessions.insert(new_cookie_token, player_id);
+
+                Ok(new_cookie_token)
+            } else {
+                Err("Wrong password!".to_owned())
+            }
+        } else {
+            Err("Username/Email not found".to_owned())
+        }
     }
 }
 
@@ -179,8 +228,8 @@ impl Handler<messages::incomming::Connect> for CahServer {
             println!("No user could be found with cookie token: {}. Creating temp account", &msg.token);
             //TODO: Not do this
             user_id = Uuid::new_v4();
-            self.sessions.insert(msg.token.clone(), user_id.clone());
-            self.database.players.push(DatabasePlayer{player: Player{id: user_id.clone(), name: format!("Temp account name for {}", &user_id)}, email: "".to_owned(), password_hash: 0});
+            self.sessions.get_mut().unwrap().insert(msg.token.clone(), user_id.clone());
+            self.database.get_mut().unwrap().players.push(DatabasePlayer{player: Player{id: user_id.clone(), name: format!("Temp account name for {}", &user_id)}, email: "".to_owned(), password_hash: Default::default()});
         }
 
         println!("{} is connecting", &user_id);
@@ -189,7 +238,7 @@ impl Handler<messages::incomming::Connect> for CahServer {
         //self.send_message(&"Main".to_owned(), "Someone joined", Uuid::nil());
 
         let user_id = user_id;
-        let db_player = self.database.players.iter().find(|&db_player| &db_player.player.id == &user_id);
+        let db_player = self.database.get_mut().unwrap().players.iter().find(|&db_player| &db_player.player.id == &user_id);
         if db_player.is_none() {
             println!("ERROR: Cannot find player with id:{} in the database, pleaes make an account first! Thanks you!", user_id);
             return;
@@ -262,7 +311,7 @@ impl Handler<messages::incomming::Disconnect> for CahServer {
         
         if let Some(user_id) = self.get_user_id(&msg.token) {
             // remove address
-            if self.sessions.remove(&msg.token).is_some() {
+            if self.sessions.get_mut().unwrap().remove(&msg.token).is_some() {
                 // remove session from all rooms
                 for (_name, room) in &mut self.matches {
                     room.players.retain(|elem| elem.id != user_id);
