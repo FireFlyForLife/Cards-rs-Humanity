@@ -70,10 +70,15 @@ fn session_get_cookie_token_or_default(session: &Session) -> CookieToken {
 /// do websocket handshake and start `MyWebSocket` actor
 fn ws_index(r: HttpRequest, stream: web::Payload, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>) -> Result<HttpResponse, Error> {
     println!("{:?}", r);
-    let cookie_token = session_get_cookie_token_or_default(&session);
-    let res = ws::start(MyWebSocket::new(cookie_token, server_address.get_ref().clone()), &r, stream);
-    println!("{:?}", res.as_ref().unwrap());
-    res
+    // let cookie_token = session_get_cookie_token_or_default(&session);
+    if let Ok(Some(cookie_token)) = session.get::<CookieToken>("ct") {
+        let res = ws::start(MyWebSocket::new(cookie_token, server_address.get_ref().clone()), &r, stream);
+        println!("{:?}", res.as_ref().unwrap());
+        res
+    } else {
+        println!("ERROR: No cookie token found. Are you not logged in?");
+        Err(Error::from(()))
+    }
 }
 
 fn get_list_rooms(r: HttpRequest, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {

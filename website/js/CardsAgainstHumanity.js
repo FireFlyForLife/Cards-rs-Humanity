@@ -1,4 +1,6 @@
 var handOfCardsContainer = null;
+//type: HashMap<buttonElement, matchName>
+var matchList = {};
 //type: HashMap<cardElement, cardId>
 var handOfCards = {};
 var hasSubmittedCard = false;
@@ -254,11 +256,17 @@ function refreshMatchList() {
 			console.error("refreshMatchList response was received, but the data is not valid json. or json is not an array. Ignoring response");
 			return;
 		}
+		
+		matchList = {};
 
-		// var originalMatches = $("#matches").html();
-		var originalMatches = "";
-		$.each(json, function(i, val) {originalMatches += val + "<br>"});
-		$("#matches").html(originalMatches);
+		$("#matches").html("");
+		$.each(json, function(i, val) { 
+			var valCopy = val;
+			var btn = $('<button/>')
+				.text('Join match')
+				.click(function() { alert('Joining match: ' + valCopy); } );
+			$("#matches").append(val).append(btn).append("<br>");
+		});
 	})
 }
 
@@ -270,10 +278,6 @@ window.onload = function () {
 	connection.connect();
 
 	connection.onAddCardToHand.add(addWhiteCard);
-	// addWhiteCard("White card from JS #1");
-	// addWhiteCard("White card from JS #2");
-	// addWhiteCard("White card from JS #3");
-	// addWhiteCard("White card from JS #4");
 
 	$('#loginForm').ajaxForm({
 		success: function() {
@@ -291,6 +295,10 @@ window.onload = function () {
 			alert("ERROR onregister. Some info: " + request.responseText + " + " + error + " + " + status);
 		}
 	});
+}
+
+function joinMatch(button) {
+	alert(button);
 }
 
 function getSelectedCard() {
@@ -321,67 +329,8 @@ function submitSelection() {
 		hasSubmittedCard = true;
 		submitButton.disabled = true;
 
-		// var payload = JSON.stringify({ type: "submitCard", card_id: 123321 });
-
-		// connection.socketConnection.send(payload);
 		connection.sendSubmitCard(new outgoingMessages.SubmitCard(cardId));
-
-		// $.ajax({
-		//     url: 'submitCard',
-		//     // dataType: 'json', //Omitted because jquery trips over itself it I put it in
-		//     type: 'post',
-		//     contentType: 'application/json',
-		//     data: payload,
-		//     processData: false,
-		// })
-		// .done(function( data, textStatus, jQxhr ) {
-		// 	alert( "Submitted card response: " + jQxhr.status + " Data Loaded: '" + data + "'" );
-		// })
-		// .fail(function(request, status, error) {
-		// 	alert("ERROR Submitting card. Some info: " + request.responseText + " + " + error + " + " + status);
-		// })
-
 	}
-}
-
-function onClickLogin() {
-	//TODO: This should be send by https which makes this safe right??
-	var username = $("#usernameField").text();
-	var password = $("#passwordField").text();
-	console.log("Logging in with username: " + username);
-	var payload = {username: username, password: password};
-	$.post('api/login', $('#loginForm').serialize())
-	// $.ajax({
-	// 	    url: 'api/login',
-	// 	    type: 'post',
-	// 		data: $("loginForm").serialize(),//JSON.stringify(payload),
-	// 		contentType: 'application/x-www-form-urlencoded',
-	// 	})
-		.done(function( data, textStatus, jQxhr ) {
-			alert( "onlogin response: " + jQxhr.status + " Data Loaded: '" + data + "'" );
-		})
-		.fail(function(request, status, error) {
-			alert("ERROR onlogin. '" + error + "' with reason: '" + request.responseText + "'. response status: '" + status + "'");
-		})
-}
-
-function onClickRegister() {
-	//TODO: This should be send by https which makes this safe right??
-	var username = $("#usernameField").text();
-	var password = $("#passwordField").text();
-	console.log("Logging in with username: " + username);
-	var payload = {username: username, pass: password};
-	$.ajax({
-			url: 'api/register',
-			type: 'post',
-			data: payload
-		})
-		.done(function( data, textStatus, jQxhr ) {
-			alert( "onregister response: " + jQxhr.status + " Data Loaded: '" + data + "'" );
-		})
-		.fail(function(request, status, error) {
-			alert("ERROR onregister. Some info: " + request.responseText + " + " + error + " + " + status);
-		})
 }
 
 function newRoundStarts() {

@@ -59,6 +59,7 @@ pub struct DatabasePlayer {
     player: Player,
     email: String,
     password_hash: PasswordHash, 
+    salt: Uuid,
 }
 
 #[derive(Default)]
@@ -101,6 +102,7 @@ impl Default for CahServer {
         // default room
         let mut matches = HashMap::new();
         matches.insert("Main".to_owned(), Match::default());
+        matches.insert("Second Room".to_owned(), Match::default());
 
         CahServer {
             socket_actors: HashMap::new(),
@@ -153,9 +155,8 @@ impl Actor for CahServer {
     type Context = Context<Self>;
 }
 
-fn hash_password(username: &str, password: &str) -> PasswordHash {
-    let mut total_string = String::with_capacity(username.len() + password.len());
-    total_string.push_str(username);
+fn hash_password(salt: &Uuid, password: &str) -> PasswordHash {
+    let mut total_string = salt.to_string();
     total_string.push_str(password);
 
     let mut sha =  ShaImpl::new();
@@ -175,8 +176,9 @@ impl Handler<messages::incomming::RegisterAccount> for CahServer {
             };
         }
 
-        let password_hash = hash_password(&msg.username, &msg.password);
-        let new_db_player = DatabasePlayer{player: Player{name: msg.username, id: Uuid::new_v4()}, email: msg.email, password_hash: password_hash};
+        let salt = Uuid::new_v4();
+        let password_hash = hash_password(&salt, &msg.password);
+        let new_db_player = DatabasePlayer{player: Player{name: msg.username, id: Uuid::new_v4()}, email: msg.email, password_hash: password_hash, salt: salt};
         println!("Registering new user: {:?}", &new_db_player);
         self.database.get_mut().unwrap().players.push(new_db_player);
 
@@ -189,15 +191,15 @@ impl Handler<messages::incomming::Login> for CahServer {
     type Result = Result<CookieToken, String>;
 
     //TODO: How to handle two people fighting over a account?
-    fn handle(&mut self, msg: messages::incomming::Login, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: messages::incomming::Login, _ctx: &mut Context<Self>) -> Self::Result {
         let db = self.database.get_mut().unwrap();
         if let Some(db_player) = db.players.iter().find(|&db_player| db_player.player.name == msg.username_or_email || db_player.email == msg.username_or_email) {
-            let password_hash = hash_password(&db_player.player.name, &msg.password);
+            let password_hash = hash_password(&db_player.salt, &msg.password);
             if password_hash == db_player.password_hash {
                 let sessions = self.sessions.get_mut().unwrap();
                 let player_id = db_player.player.id.clone();
                 //TODO: Optimize this, there can only be one.
-                sessions.retain(|&key, &mut value| value != player_id);
+                sessions.retain(|&_key, &mut value| value != player_id);
                 let new_cookie_token = CookieToken::new_v4();
                 sessions.insert(new_cookie_token, player_id);
 
@@ -229,13 +231,10 @@ impl Handler<messages::incomming::Connect> for CahServer {
             //TODO: Not do this
             user_id = Uuid::new_v4();
             self.sessions.get_mut().unwrap().insert(msg.token.clone(), user_id.clone());
-            self.database.get_mut().unwrap().players.push(DatabasePlayer{player: Player{id: user_id.clone(), name: format!("Temp account name for {}", &user_id)}, email: "".to_owned(), password_hash: Default::default()});
+            self.database.get_mut().unwrap().players.push(DatabasePlayer{player: Player{id: user_id.clone(), name: format!("Temp account name for {}", &user_id)}, email: "".to_owned(), password_hash: Default::default(), salt: Uuid::new_v4()});
         }
 
         println!("{} is connecting", &user_id);
-
-        // notify all users in same room
-        //self.send_message(&"Main".to_owned(), "Someone joined", Uuid::nil());
 
         let user_id = user_id;
         let db_player = self.database.get_mut().unwrap().players.iter().find(|&db_player| &db_player.player.id == &user_id);
