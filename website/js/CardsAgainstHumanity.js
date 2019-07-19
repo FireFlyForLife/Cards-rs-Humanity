@@ -58,7 +58,8 @@ var incommingMessages = {
 	}
 };
 
-// send a GET request to the server.
+// Send a GET request to the server.
+// This function is async, it will return a JQuerry Ajax object. When that request is completed, the data should contain a JSON array of strings
 //
 // @returns ajax request returning a String[] of all matches
 function sendListMatches() {
@@ -71,9 +72,29 @@ function sendListMatches() {
 	})
 	.fail(function(request, status, error) {
 		alert("ERROR listing all matches. Some info: " + request.responseText + " + " + error + " + " + status);
-	})
+	});
 
 	return req;
+}
+
+// send a GET request to join a match. 
+// The server will automiatically disconnect you from a previous match if you were already in another match
+//
+// @arg joinMatch an instance of `outgoingMessages.JoinMatch`
+// @returns jquerry ajax request object returning nothing on success, but an error string on failure
+function sendJoinMatch(joinMatch) {
+	var request = $.ajax({
+		url: '/api/join/' + joinMatch.matchId,
+		type: 'get',
+	})
+	.done(function(data, textStatus, jQxhr) {
+		console.log( "joining match successful: " + jQxhr.status + " Data Loaded: '" + data + "'" );
+	})
+	.fail(function(request, status, error) {
+		alert("ERROR joining match. Some info: " + request.responseText + " + " + error + " + " + status);
+	});
+
+	return request;
 }
 
 class ServerSocketConnection {
@@ -188,9 +209,9 @@ class ServerSocketConnection {
 			this.socketConnection = null;
 		}
 	}
-	connect() {
+	connect(matchId) {
 		this.disconnect();
-		var wsUri = (window.location.protocol == 'https:' && 'wss://' || 'ws://') + window.location.host + '/ws/';
+		var wsUri = (window.location.protocol == 'https:' && 'wss://' || 'ws://') + window.location.host + '/ws/' + matchId;
 		this.socketConnection = new WebSocket(wsUri);
 		console.log('Connecting...');
 		var self = this;
@@ -205,9 +226,12 @@ class ServerSocketConnection {
 			console.log('Disconnected.');
 			this.socketConnection = null;
 		};
+		this.socketConnection.onerror = function(error) {
+			console.error("WebSocket error observed:", error);
+		}
 	}
 	isConnected() {
-		return this.socketConnection != null;
+		return this.socketConnection != null && this.socketConnection.readyState == 1;
 	}
 }
 
@@ -264,7 +288,18 @@ function refreshMatchList() {
 			var valCopy = val;
 			var btn = $('<button/>')
 				.text('Join match')
-				.click(function() { alert('Joining match: ' + valCopy); } );
+				.click(function() { 
+					alert('Joining match: ' + valCopy); 
+					var ajaxRequest = sendJoinMatch(new outgoingMessages.JoinMatch(valCopy));
+					ajaxRequest.done(function() { 
+						console.log("Successfully joined match!");
+						//TODO: Set some html element to a happy face or something idk
+						connection.connect(valCopy);
+					});
+					ajaxRequest.fail(function(request, status, error) {
+						alert("ERROR match memes went wrong!!!. Some info: " + request.responseText + " + " + error + " + " + status);
+					});
+				});
 			$("#matches").append(val).append(btn).append("<br>");
 		});
 	})
@@ -275,7 +310,7 @@ window.onload = function () {
 	submitButton = document.getElementById("submitButton");
 
 	connection = new ServerSocketConnection();
-	connection.connect();
+	// connection.connect();
 
 	connection.onAddCardToHand.add(addWhiteCard);
 
@@ -295,10 +330,6 @@ window.onload = function () {
 			alert("ERROR onregister. Some info: " + request.responseText + " + " + error + " + " + status);
 		}
 	});
-}
-
-function joinMatch(button) {
-	alert(button);
 }
 
 function getSelectedCard() {

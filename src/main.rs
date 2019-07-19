@@ -13,8 +13,8 @@
 
 #[macro_use]
 extern crate serde_derive;
-#[macro_use]
-extern crate log;
+// #[macro_use]
+// extern crate log;
 
 use std::io;
 use std::sync::Mutex;
@@ -29,8 +29,7 @@ use actix_session::{Session, CookieSession};
 
 use uuid::Uuid;
 
-use futures::{Future, Stream};
-use futures::future::{ok, err};
+use futures::{Future};
 
 
 pub mod cah_server;
@@ -68,8 +67,9 @@ fn session_get_cookie_token_or_default(session: &Session) -> CookieToken {
 }
 
 /// do websocket handshake and start `MyWebSocket` actor
-fn ws_index(r: HttpRequest, stream: web::Payload, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>) -> Result<HttpResponse, Error> {
+fn ws_index(r: HttpRequest, stream: web::Payload, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>, path: web::Path<String>) -> Result<HttpResponse, Error> {
     println!("{:?}", r);
+    println!("Trying to connect to: {}", path);
     // let cookie_token = session_get_cookie_token_or_default(&session);
     if let Ok(Some(cookie_token)) = session.get::<CookieToken>("ct") {
         let res = ws::start(MyWebSocket::new(cookie_token, server_address.get_ref().clone()), &r, stream);
@@ -81,7 +81,22 @@ fn ws_index(r: HttpRequest, stream: web::Payload, session: Session, server_addre
     }
 }
 
-fn get_list_rooms(r: HttpRequest, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {
+/// handler with path parameters like `/user/{name}/`
+fn get_join_match(req: HttpRequest, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>, path: web::Path<String>) -> Result<HttpResponse, Error> {
+    println!("{:?}", req);
+
+    if let Ok(Some(cookie_token)) = session.get::<CookieToken>("ct") {
+        let match_name = path.clone();
+        server_address.do_send(messages::incomming::JoinMatch{match_name: match_name, token: cookie_token});
+
+        Ok(HttpResponse::build(StatusCode::OK).finish())
+    } else {
+        Err(Error::from(()))
+    }
+}
+
+
+fn get_list_rooms(_r: HttpRequest, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {
     let token = session_get_cookie_token_or_default(&session);
     
     server_address.send(messages::incomming::ListRooms{cookie_token: token})
@@ -118,7 +133,7 @@ pub struct RegisterRequestPayload {
     pub password: String,
 }
 
-fn post_page_register(r: HttpRequest, body: web::Form<RegisterRequestPayload>, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {
+fn post_page_register(_r: HttpRequest, body: web::Form<RegisterRequestPayload>, server_address: web::Data<Addr<cah_server::CahServer>>) -> impl Future<Item = HttpResponse, Error = Error> {
     server_address.send(messages::incomming::RegisterAccount{email: body.email.clone(), username: body.username.clone(), password: body.password.clone()})
         .map_err(Error::from)
         .map( |matches| {
@@ -157,7 +172,7 @@ impl Actor for MyWebSocket {
         self.hb(ctx);
 
         let addr = ctx.address();
-        self.server_addr.do_send(messages::incomming::Connect{addr: addr.recipient(), token: self.cookie_token.clone()});
+        self.server_addr.do_send(messages::incomming::SocketConnectMatch{addr: addr.recipient(), token: self.cookie_token.clone()});
     }
 
     fn stopping(&mut self, _context: &mut Self::Context) -> Running {
@@ -269,11 +284,12 @@ fn main() -> io::Result<()> {
             // register simple handler, goto counter page
             .service(web::resource("/counter").to(counter_page))
             // WebSocket connections go here
-            .service(web::resource("/ws/").route(web::get().to(ws_index)))
+            .service(web::resource("/ws/{match}").route(web::get().to(ws_index)))
             .service( web::scope("/api/")
                 .service(web::resource("/list_matches").route(web::get().to_async(get_list_rooms)))
                 .service(web::resource("/login").route(web::post().to_async(post_page_login)))
-                .service(web::resource("/register").route(web::post().to_async(post_page_register))) )
+                .service(web::resource("/register").route(web::post().to_async(post_page_register)))
+                .service(web::resource("/join/{match}").route(web::get().to(get_join_match))) )
             // the default website should display the index page located in the website folder and serve all css/js files relative to it.
             .service(fs::Files::new("/", "website").index_file("index.html"))
     })

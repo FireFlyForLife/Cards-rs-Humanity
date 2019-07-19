@@ -3,8 +3,7 @@
 //! room through `ChatServer`.
 
 use actix::prelude::*;
-use rand::{self, rngs::ThreadRng, Rng};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use uuid::Uuid;
 use json::JsonValue;
 use std::sync::RwLock;
@@ -67,6 +66,18 @@ pub struct Database {
     card_decks: HashMap<String, CardDeck>,
     players: Vec<DatabasePlayer>,
 }
+impl Database {
+    fn get_player_by_id(&self, id: &Uuid) -> Option<Player> {
+        for db_player in &self.players {
+            if db_player.player.id == *id {
+                return Some(db_player.player.clone());
+            }
+        }
+
+        None
+    }
+}
+
 
 #[derive(Default)]
 pub struct Match {
@@ -92,9 +103,8 @@ pub struct CahServer {
     socket_actors: HashMap<CookieToken, Recipient<messages::outgoing::Message>>,
     // The cookie token to player Uuid, the Uuid is the reprisentation internally.
     sessions: RwLock<HashMap<CookieToken, Uuid>>, //TODO: Clear sessins after a couple hours/days, so the ram doesn't quitely go downwards.
-    matches: HashMap<String, Match>,
-    database: RwLock<Database>,
-    rng: ThreadRng,
+    matches: RwLock<HashMap<String, Match>>,
+    database: RwLock<Database>
 }
 
 impl Default for CahServer {
@@ -107,9 +117,8 @@ impl Default for CahServer {
         CahServer {
             socket_actors: HashMap::new(),
             sessions: Default::default(),
-            matches: matches,
+            matches: RwLock::new(matches),
             database: Default::default(),
-            rng: rand::thread_rng(),
         }
     }
 }
@@ -117,7 +126,7 @@ impl Default for CahServer {
 impl CahServer {
     //TODO: Optimize
     fn get_room_from_uuid(&self, user_id: &Uuid) -> Option<String> {
-        for room in self.matches.iter() {
+        for room in self.matches.read().unwrap().iter() {
             for player in room.1.players.iter() {
                 if &player.id == user_id {
                     return Some(room.0.clone());
@@ -148,7 +157,7 @@ impl CahServer {
     }
 }
 
-/// Make actor from `ChatServer`
+/// Make actor from `CahServer`
 impl Actor for CahServer {
     /// We are going to use simple Context, we just need ability to communicate
     /// with other actors.
@@ -156,11 +165,11 @@ impl Actor for CahServer {
 }
 
 fn hash_password(salt: &Uuid, password: &str) -> PasswordHash {
-    let mut total_string = salt.to_string();
-    total_string.push_str(password);
-
     let mut sha =  ShaImpl::new();
-    sha.input(total_string);
+
+    sha.input(salt.clone().to_simple_ref().to_string());
+    sha.input(password);
+
     sha.result()
 }
 
@@ -183,7 +192,6 @@ impl Handler<messages::incomming::RegisterAccount> for CahServer {
         self.database.get_mut().unwrap().players.push(new_db_player);
 
         Ok(())
-        
     }
 }
 
@@ -216,10 +224,10 @@ impl Handler<messages::incomming::Login> for CahServer {
 /// Handler for Connect message.
 ///
 /// Register new session and assign unique id to this session
-impl Handler<messages::incomming::Connect> for CahServer {
-    type Result = ();
+impl Handler<messages::incomming::SocketConnectMatch> for CahServer {
+    type Result = Result<(), String>;
 
-    fn handle(&mut self, msg: messages::incomming::Connect, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: messages::incomming::SocketConnectMatch, ctx: &mut Context<Self>) -> Self::Result {
         // register session with token
         self.socket_actors.insert(msg.token.clone(), msg.addr);
 
@@ -227,33 +235,64 @@ impl Handler<messages::incomming::Connect> for CahServer {
         if let Some(user_id_) = self.get_user_id(&msg.token) {
             user_id = user_id_;
         } else {
-            println!("No user could be found with cookie token: {}. Creating temp account", &msg.token);
-            //TODO: Not do this
-            user_id = Uuid::new_v4();
-            self.sessions.get_mut().unwrap().insert(msg.token.clone(), user_id.clone());
-            self.database.get_mut().unwrap().players.push(DatabasePlayer{player: Player{id: user_id.clone(), name: format!("Temp account name for {}", &user_id)}, email: "".to_owned(), password_hash: Default::default(), salt: Uuid::new_v4()});
+            println!("No user could be found with cookie token: {}.", &msg.token);
+            return Err(format!("No user could be found with cookie token: {}", &msg.token));
+
+            // user_id = Uuid::new_v4();
+            // self.sessions.get_mut().unwrap().insert(msg.token.clone(), user_id.clone());
+            // self.database.get_mut().unwrap().players.push(DatabasePlayer{player: Player{id: user_id.clone(), name: format!("Temp account name for {}", &user_id)}, email: "".to_owned(), password_hash: Default::default(), salt: Uuid::new_v4()});
         }
 
         println!("{} is connecting", &user_id);
 
-        let user_id = user_id;
         let db_player = self.database.get_mut().unwrap().players.iter().find(|&db_player| &db_player.player.id == &user_id);
-        if db_player.is_none() {
-            println!("ERROR: Cannot find player with id:{} in the database, pleaes make an account first! Thanks you!", user_id);
-            return;
-        }
+        debug_assert!(db_player.is_some(), 
+            format!("ERROR: Cannot find player with id:{} in the database, pleaes make an account first! Thanks you!", user_id));
+
         let player = db_player.unwrap().player.clone();
 
-        // auto join session to Main room
-        self.matches.get_mut(&"Main".to_owned()).unwrap().players.push(player.clone());
+        if let Some(room_name) = self.get_room_from_uuid(&user_id) {
+            self.matches.get_mut().unwrap().get_mut(&"Main".to_owned()).unwrap().players.push(player.clone());
 
-        //TODO: Let this be choosen by the client
-        let room = "Main".to_owned();
+            for i in 0..4 {
+                //TODO: Not hardcode cards...
+                let card = Card{content: format!("A card from the server! {}", i), id: i};
+                ctx.address().do_send(messages::outgoing::AddCardToHand{room: room_name.clone(), player: player.clone(), card: card});
+            }
 
-        for i in 0..4 {
-            //TODO: Not hardcode cards...
-            let card = Card{content: format!("A card from the server! {}", i), id: i};
-            ctx.address().do_send(messages::outgoing::AddCardToHand{room: room.clone(), player: player.clone(), card: card});
+            Ok(())
+        } else {
+            Err("Could not find a match where this user is in, is JoinMatch not send beforehand?".to_owned())
+        }
+
+    }
+}
+
+impl Handler<messages::incomming::JoinMatch> for CahServer {
+    type Result = Result<(), String>;
+
+    fn handle(&mut self, msg: messages::incomming::JoinMatch, ctx: &mut Context<Self>) -> Self::Result {
+        if let Some(user_id) = self.get_user_id(&msg.token) {
+            //Firstly disconnect from an existing match if we are in there
+            if let Some(room) = self.get_room_from_uuid(&user_id) {
+                //TODO: Also pass the room
+                ctx.address().do_send(messages::incomming::Disconnect{token: msg.token});
+            }
+            let matches = self.matches.get_mut().unwrap();
+            if let Some(room) = matches.get_mut(&msg.match_name) {
+                let db = self.database.read().unwrap();
+                let player_option = db.get_player_by_id(&user_id);
+                debug_assert!(player_option.is_some(), 
+                    "We managed to find ourselves with the call `CahServer::get_user_id()` but we cannot find ourselves in self.matches");
+
+                room.players.push(player_option.unwrap());
+
+                Ok(())
+            } else {
+                Err(format!("Cannot find the room named '{}'. Has it been removed in the meantime?", msg.match_name))
+            }
+        } else {
+            Err("No user with that cookie token could be found, maybe the session expired?".to_owned())
         }
     }
 }
@@ -261,7 +300,7 @@ impl Handler<messages::incomming::Connect> for CahServer {
 impl Handler<messages::outgoing::AddCardToHand> for CahServer {
     type Result = ();
 
-    fn handle(&mut self, msg: messages::outgoing::AddCardToHand, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: messages::outgoing::AddCardToHand, _ctx: &mut Context<Self>) -> Self::Result {
         let mut message = json::parse(r#"{"type": "addCardToHand"}"#).unwrap();
         message["card_content"] = JsonValue::String(msg.card.content);
         message["card_id"] = JsonValue::Number(json::number::Number::from(msg.card.id));
@@ -279,8 +318,6 @@ impl Handler<messages::outgoing::AddCardToHand> for CahServer {
 }
 
 /// Handler for SubmitCard message
-///
-/// Register new session and assign unique id to this session
 impl Handler<messages::incomming::SubmitCard> for CahServer {
     type Result = ();
 
@@ -312,7 +349,7 @@ impl Handler<messages::incomming::Disconnect> for CahServer {
             // remove address
             if self.sessions.get_mut().unwrap().remove(&msg.token).is_some() {
                 // remove session from all rooms
-                for (_name, room) in &mut self.matches {
+                for (_name, room) in self.matches.get_mut().unwrap() {
                     room.players.retain(|elem| elem.id != user_id);
                 }
             }
@@ -324,15 +361,6 @@ impl Handler<messages::incomming::Disconnect> for CahServer {
     }
 }
 
-/// Handler for Message message.
-impl Handler<messages::incomming::ClientMessage> for CahServer {
-    type Result = ();
-
-    fn handle(&mut self, msg: messages::incomming::ClientMessage, _: &mut Context<Self>) {
-        // self.send_message(&msg.room, msg.msg.as_str(), msg.id);
-    }
-}
-
 /// Handler for `ListRooms` message.
 impl Handler<messages::incomming::ListRooms> for CahServer {
     type Result = MessageResult<messages::incomming::ListRooms>;
@@ -340,38 +368,10 @@ impl Handler<messages::incomming::ListRooms> for CahServer {
     fn handle(&mut self, _: messages::incomming::ListRooms, _: &mut Context<Self>) -> Self::Result {
         let mut rooms = Vec::<String>::new();
 
-        for key in self.matches.keys() {
+        for key in self.matches.read().unwrap().keys() {
             rooms.push(key.to_owned())
         }
 
         MessageResult(rooms)
-    }
-}
-
-/// Join room, send disconnect message to old room
-/// send join message to new room
-impl Handler<messages::incomming::Join> for CahServer {
-    type Result = ();
-
-    fn handle(&mut self, msg: messages::incomming::Join, _: &mut Context<Self>) {
-        let messages::incomming::Join { id, name } = msg;
-        // let mut rooms = Vec::new();
-
-        // remove session from all rooms
-        // for (n, sessions) in &mut self.rooms {
-        //     if sessions.remove(&id) {
-        //         rooms.push(n.to_owned());
-        //     }
-        // }
-        // // send message to other users
-        // for room in rooms {
-        //     self.send_message(&room, "Someone disconnected", Uuid::nil());
-        // }
-
-        // if self.rooms.get_mut(&name).is_none() {
-        //     self.rooms.insert(name.clone(), HashSet::new());
-        // }
-        // self.send_message(&name, "Someone connected", id);
-        // self.rooms.get_mut(&name).unwrap().insert(id);
     }
 }
