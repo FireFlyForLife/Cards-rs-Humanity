@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use json::JsonValue;
 use std::sync::RwLock;
+use std::collections::hash_map::Entry;
 
 use std::u64;
 use crate::CookieToken;
@@ -47,7 +48,7 @@ pub struct CardDeck {
     white_cards: Vec<Card>,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Player {
     name: String,
     id: Uuid,
@@ -78,12 +79,38 @@ impl Database {
     }
 }
 
+#[derive(PartialEq, Eq)]
+pub enum MatchProgress {
+    NotStarted,
+    InProgress,
+}
+impl Default for MatchProgress {
+    fn default() -> Self{
+        MatchProgress::NotStarted
+    }
+}
 
 #[derive(Default)]
 pub struct Match {
     players: Vec<Player>,
-    player_hands: HashMap<String, Vec<String>>,
-    player_submitted_card: HashMap<String, String>,
+    player_hands: HashMap<Uuid, Vec<String>>,
+    player_submitted_card: HashMap<Uuid, String>,
+    match_progress: MatchProgress,
+}
+impl Match {
+    fn remove_player(&mut self, user_id: &Uuid) {
+        let player_pos_option = self.players.iter().position(move |player| player.id == *user_id);
+        match player_pos_option {
+            Some(player_pos) => {
+                self.players.remove(player_pos);
+                //TODO: Send event to the others
+            },
+            None => {}
+        }
+
+        let _really_removed = self.player_hands.remove(user_id);
+        let _ = self.player_submitted_card.remove(user_id);
+    }
 }
 
 
@@ -97,10 +124,21 @@ pub struct Match {
     
 // }
 
+
+/// struct used for sending over network, for syncing new clients
+#[derive(Serialize, Deserialize)]
+pub struct GameState {
+    other_players: Vec<Player>,
+    our_player: Player,
+    hand_of_cards: Vec<String>,
+    czar: Uuid,
+    started: bool,
+}
+
 /// `CahServer`(Cards against humanity server) manages matches and responsible for coordinating
 /// session. 
 pub struct CahServer {
-    socket_actors: HashMap<CookieToken, Recipient<messages::outgoing::Message>>,
+    socket_actors: HashMap<CookieToken, Addr<crate::MyWebSocket>>,
     // The cookie token to player Uuid, the Uuid is the reprisentation internally.
     sessions: RwLock<HashMap<CookieToken, Uuid>>, //TODO: Clear sessins after a couple hours/days, so the ram doesn't quitely go downwards.
     matches: RwLock<HashMap<String, Match>>,
@@ -252,13 +290,13 @@ impl Handler<messages::incomming::SocketConnectMatch> for CahServer {
         let player = db_player.unwrap().player.clone();
 
         if let Some(room_name) = self.get_room_from_uuid(&user_id) {
-            self.matches.get_mut().unwrap().get_mut(&"Main".to_owned()).unwrap().players.push(player.clone());
+            //self.matches.get_mut().unwrap().get_mut(&"Main".to_owned()).unwrap().players.push(player.clone());
 
-            for i in 0..4 {
-                //TODO: Not hardcode cards...
-                let card = Card{content: format!("A card from the server! {}", i), id: i};
-                ctx.address().do_send(messages::outgoing::AddCardToHand{room: room_name.clone(), player: player.clone(), card: card});
-            }
+            // for i in 0..4 {
+            //     //TODO: Not hardcode cards...
+            //     let card = Card{content: format!("A card from the server! {}", i), id: i};
+            //     ctx.address().do_send(messages::outgoing::AddCardToHand{room: room_name.clone(), player: player.clone(), card: card});
+            // }
 
             Ok(())
         } else {
@@ -269,30 +307,55 @@ impl Handler<messages::incomming::SocketConnectMatch> for CahServer {
 }
 
 impl Handler<messages::incomming::JoinMatch> for CahServer {
-    type Result = Result<(), String>;
+    type Result = Result<GameState, String>;
 
     fn handle(&mut self, msg: messages::incomming::JoinMatch, ctx: &mut Context<Self>) -> Self::Result {
         if let Some(user_id) = self.get_user_id(&msg.token) {
             //Firstly disconnect from an existing match if we are in there
             if let Some(room) = self.get_room_from_uuid(&user_id) {
-                //TODO: Also pass the room
-                ctx.address().do_send(messages::incomming::Disconnect{token: msg.token});
+                //ctx.address().do_send(messages::incomming::Leavematch{match_name: room, token: msg.token});
+                let _ = self.handle(messages::incomming::Leavematch{match_name: room, token: msg.token}, ctx);
             }
             let matches = self.matches.get_mut().unwrap();
             if let Some(room) = matches.get_mut(&msg.match_name) {
                 let db = self.database.read().unwrap();
                 let player_option = db.get_player_by_id(&user_id);
                 debug_assert!(player_option.is_some(), 
-                    "We managed to find ourselves with the call `CahServer::get_user_id()` but we cannot find ourselves in self.matches");
+                    "We managed to find ourselves with the call `CahServer::get_user_id()` but we cannot find ourselves in `self.get_player_by_id()`");
+                let player = player_option.unwrap();
+                room.players.push(player.clone());
 
-                room.players.push(player_option.unwrap());
+                room.player_hands.insert(user_id.clone(), Vec::new());
+                
+                let game_state = GameState{
+                    other_players: room.players.clone(), 
+                    our_player: player.clone(), 
+                    hand_of_cards: room.player_hands[&user_id].clone(),
+                    czar: room.players[0].id.clone(),
+                    started: room.match_progress == MatchProgress::InProgress};
 
-                Ok(())
+                Ok(game_state)
             } else {
                 Err(format!("Cannot find the room named '{}'. Has it been removed in the meantime?", msg.match_name))
             }
         } else {
             Err("No user with that cookie token could be found, maybe the session expired?".to_owned())
+        }
+    }
+}
+
+/// Handler for Disconnect message.
+impl Handler<messages::incomming::Leavematch> for CahServer {
+    type Result = ();
+
+    fn handle(&mut self, msg: messages::incomming::Leavematch, _: &mut Context<Self>) {
+        if let Some(user_id) = self.get_user_id(&msg.token) {
+            match self.matches.get_mut().unwrap().get_mut(&msg.match_name) {
+                Some(room) => {
+                    room.remove_player(&user_id);
+                },
+                None => {},
+            }
         }
     }
 }
@@ -307,8 +370,8 @@ impl Handler<messages::outgoing::AddCardToHand> for CahServer {
         let message_json = json::stringify(message);
 
         if let Some(cookie_token) = self.get_cookie_token_from_user_id(&msg.player.id) {
-            let recipient = &self.socket_actors[&cookie_token];
-            let msg_result = recipient.do_send(messages::outgoing::Message(message_json));
+            let addr = &self.socket_actors[&cookie_token];
+            let msg_result = addr.try_send(messages::outgoing::Message(message_json));
             if msg_result.is_err() {
                 //TODO: Handle this or something
                 debug_assert!(false);
@@ -323,10 +386,12 @@ impl Handler<messages::incomming::SubmitCard> for CahServer {
 
     fn handle(&mut self, msg: messages::incomming::SubmitCard, _: &mut Context<Self>) -> Self::Result {
         if let Some(user_id) = self.get_user_id(&msg.token) {
-            let room = self.get_room_from_uuid(&user_id);
-            match room {
-                Some(r) => {
-                println!("room: {}. player: {} submitted the card: {}", r, &user_id, msg.card_id);
+            let room_option = self.get_room_from_uuid(&user_id);
+            match room_option {
+                Some(room_name) => {
+                    println!("room: {}. player: {} submitted the card: {}", room_name, &user_id, msg.card_id);
+                    let room = self.matches.get_mut().unwrap().get_mut(&room_name).unwrap();
+                    let _ = room.player_submitted_card.entry(user_id).or_insert("wasd".to_owned());
                 }
                 None => {
                     println!("NO ROOM FOUND FOR PLAYER: {} tries to submit the card: {}", &user_id, msg.card_id);
@@ -343,6 +408,15 @@ impl Handler<messages::incomming::Disconnect> for CahServer {
     fn handle(&mut self, msg: messages::incomming::Disconnect, _: &mut Context<Self>) {
         println!("Someone disconnected");
 
+        // let socket_actor_entrty = self.socket_actors.entry(msg.token.clone());
+        // match socket_actor_entrty {
+        //     Entry::Occupied(entry) => {
+        //         let (_saved_token, _socket_actor) = entry.remove_entry();
+        //         //actually we don't need to stop, if all Addr's go out of scope, the actor is stopped automatically
+        //         //socket_actor.stop()
+        //     },
+        //     _ => {},
+        // }
         let _ = self.socket_actors.remove(&msg.token);
         
         if let Some(user_id) = self.get_user_id(&msg.token) {

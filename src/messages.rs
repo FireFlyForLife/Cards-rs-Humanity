@@ -1,7 +1,8 @@
-use crate::cah_server::{Card, CardId, Player};
+use crate::cah_server::{Card, CardId, Player, GameState};
 use crate::CookieToken;
 use actix::prelude::*;
 use std::string::String;
+use crate::MyWebSocket;
 
 // Containing all messages which will be commin in from a client to the server
 pub mod incomming {
@@ -9,7 +10,7 @@ pub mod incomming {
 
     /// When a socket connection has been established and the socket wants to be bound to a match
     pub struct SocketConnectMatch {
-        pub addr: Recipient<outgoing::Message>,
+        pub addr: Addr<MyWebSocket>,
         pub token: CookieToken,
     }
     impl actix::Message for SocketConnectMatch {
@@ -22,7 +23,13 @@ pub mod incomming {
         pub token: CookieToken,
     }
     impl actix::Message for JoinMatch {
-        type Result = Result<(), String>;
+        type Result = Result<GameState, String>;
+    }
+
+    #[derive(Message)]
+    pub struct Leavematch {
+        pub match_name: String,
+        pub token: CookieToken,
     }
 
     // #[derive(Message)]
@@ -46,7 +53,7 @@ pub mod incomming {
         type Result = Result<CookieToken, String>;
     }
 
-    /// Session is disconnected
+    /// Disconnect from everything
     #[derive(Message)]
     pub struct Disconnect {
         pub token: CookieToken,

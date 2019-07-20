@@ -67,12 +67,12 @@ fn session_get_cookie_token_or_default(session: &Session) -> CookieToken {
 }
 
 /// do websocket handshake and start `MyWebSocket` actor
-fn ws_index(r: HttpRequest, stream: web::Payload, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>, path: web::Path<String>) -> Result<HttpResponse, Error> {
+fn ws_index(r: HttpRequest, stream: web::Payload, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>, path: web::Path<(String,)>) -> Result<HttpResponse, Error> {
     println!("{:?}", r);
-    println!("Trying to connect to: {}", path);
+    println!("Trying to connect to: {}", &path.0);
     // let cookie_token = session_get_cookie_token_or_default(&session);
     if let Ok(Some(cookie_token)) = session.get::<CookieToken>("ct") {
-        let res = ws::start(MyWebSocket::new(cookie_token, server_address.get_ref().clone()), &r, stream);
+        let res = ws::start(MyWebSocket::new(cookie_token, server_address.get_ref().clone(), path.0.clone()), &r, stream);
         println!("{:?}", res.as_ref().unwrap());
         res
     } else {
@@ -87,9 +87,15 @@ fn get_join_match(req: HttpRequest, session: Session, server_address: web::Data<
 
     if let Ok(Some(cookie_token)) = session.get::<CookieToken>("ct") {
         let match_name = path.clone();
-        server_address.do_send(messages::incomming::JoinMatch{match_name: match_name, token: cookie_token});
+        let async_req = server_address.send(messages::incomming::JoinMatch{match_name: match_name, token: cookie_token});
+        let res = async_req.wait();
+        match res {
+            Ok(Ok(game_state)) => Ok(HttpResponse::build(StatusCode::OK).body(serde_json::to_string(&game_state).unwrap())),
+            Ok(Err(error)) => Ok(HttpResponse::build(StatusCode::UNAUTHORIZED).body(error)),
+            Err(error) => Err(Error::from(error)),
+        }
 
-        Ok(HttpResponse::build(StatusCode::OK).finish())
+        
     } else {
         Err(Error::from(()))
     }
@@ -146,11 +152,12 @@ fn post_page_register(_r: HttpRequest, body: web::Form<RegisterRequestPayload>, 
 
 /// websocket connection is long running connection, it easier
 /// to handle with an actor
-struct MyWebSocket {
+pub struct MyWebSocket {
     /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
     /// otherwise we drop connection.
     hb: Instant,
     cookie_token: CookieToken,
+    match_name: String,
     
     server_addr: Addr<cah_server::CahServer>,
 }
@@ -172,10 +179,19 @@ impl Actor for MyWebSocket {
         self.hb(ctx);
 
         let addr = ctx.address();
-        self.server_addr.do_send(messages::incomming::SocketConnectMatch{addr: addr.recipient(), token: self.cookie_token.clone()});
+        let connect_request = self.server_addr.send(messages::incomming::SocketConnectMatch{addr: addr.clone(), token: self.cookie_token.clone()});
+        match connect_request.wait() {
+            Ok(_) => {},
+            Err(err_msg) => { 
+                println!("ERROR while connecting websocket: '{}'", err_msg);
+                self.server_addr.do_send(messages::incomming::Disconnect{token: self.cookie_token.clone()});
+            }
+        }
     }
 
-    fn stopping(&mut self, _context: &mut Self::Context) -> Running {
+    fn stopping(&mut self, _ctx: &mut Self::Context) -> Running {
+        self.server_addr.do_send(messages::incomming::Leavematch{match_name: self.match_name.clone(), token: self.cookie_token.clone()});
+
         Running::Stop
     }
 }
@@ -228,8 +244,8 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for MyWebSocket {
 }
 
 impl MyWebSocket {
-    fn new(token: CookieToken, server_addr: Addr<cah_server::CahServer>) -> Self {
-        Self { hb: Instant::now(), cookie_token: token, server_addr: server_addr }
+    fn new(token: CookieToken, server_addr: Addr<cah_server::CahServer>, match_name: String) -> Self {
+        Self { hb: Instant::now(), cookie_token: token, match_name: match_name, server_addr: server_addr }
     }
 
     /// helper method that sends ping to client every second.

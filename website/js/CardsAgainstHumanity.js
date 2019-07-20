@@ -55,6 +55,17 @@ var incommingMessages = {
 	RevealCard: function(cardContent, cardId) {
 		this.cardContent = cardContent;
 		this.cardId = cardId;
+	},
+	// @arg otherPlayers Array<{name, id}> an array of objects, each object will have a field "name" and "id"
+	// @arg ourPlayer {name, id} an object with the fields "name" and "id"
+	// @arg handOfCards Array<String> an array of cards contents
+	// @arg czar Number a id of the player which is the czar (aka host)
+	GameState: function(otherPlayers, ourPlayer, handOfCards, czar, gameStarted) {
+		this.otherPlayers = otherPlayers;
+		this.ourPlayer = ourPlayer;
+		this.handOfCards = handOfCards;
+		this.czar = czar;
+		this.gameStarted = gameStarted;
 	}
 };
 
@@ -103,6 +114,7 @@ class ServerSocketConnection {
 	onPlayerSubmittedCard = new signals.Signal();
 	onEveryoneSubmittedCards = new signals.Signal();
 	onRevealCard = new signals.Signal();
+	onGameState = new signals.Signal();
 
 	constructor() {
 		
@@ -204,7 +216,7 @@ class ServerSocketConnection {
 
 	disconnect() {
 		if (this.socketConnection != null) {
-			log('Disconnecting...');
+			console.log('Disconnecting...');
 			this.socketConnection.close();
 			this.socketConnection = null;
 		}
@@ -271,6 +283,43 @@ function addWhiteCard(msg) {
 	handOfCardsContainer.appendChild(card);
 }
 
+function newGameStateReceived(data) {
+	var jsonData = JSON.parse(data);
+	if(jsonData == null) {
+		console.error("newGameStateReceived message is not valid json!");
+		return;
+	}
+
+	console.log("New gamestate received!" + jsonData);
+	if(jsonData["other_players"] == null || !Array.isArray(jsonData["other_players"])) {
+		console.error("GameState message received, but the 'other_players' property is not an array (or not defined)");
+		return;
+	}
+	if(jsonData["our_player"] == null || typeof jsonData["our_player"] != "object") {
+		console.error("GameState message received, but the 'our_player' property is not an object (or not defined)");
+		return;
+	}
+	if(jsonData["hand_of_cards"] == null || !Array.isArray(jsonData["hand_of_cards"])) {
+		console.error("GameState message received, but the 'hand_of_cards' property is not an array (or not defined)");
+		return;
+	}
+	if(jsonData["czar"] == null || typeof jsonData["czar"] != 'string') {
+		console.error("GameState message received, but the 'czar' property is not a string (or not defined)");
+		return;
+	}
+	if(jsonData["started"] == null || typeof jsonData["started"] != 'boolean') {
+		console.error("GameState message received, but the 'started' property is not a boolean (or not defined)");
+		return;
+	}
+
+	var message = new incommingMessages.GameState(jsonData["other_players"], jsonData["our_player"], jsonData["hand_of_cards"], jsonData["czar"], jsonData["started"]);
+
+	$("#userList").html('');
+	$.each(message.otherPlayers, function(i, val) {
+		$("#userList").append(val.name + "<br>");
+	});
+}
+
 function refreshMatchList() {
 	var ajaxReq = sendListMatches();
 	ajaxReq.done(function( data ) {
@@ -291,8 +340,9 @@ function refreshMatchList() {
 				.click(function() { 
 					alert('Joining match: ' + valCopy); 
 					var ajaxRequest = sendJoinMatch(new outgoingMessages.JoinMatch(valCopy));
-					ajaxRequest.done(function() { 
+					ajaxRequest.done(function(data) { 
 						console.log("Successfully joined match!");
+						newGameStateReceived(data);
 						//TODO: Set some html element to a happy face or something idk
 						connection.connect(valCopy);
 					});
@@ -310,9 +360,9 @@ window.onload = function () {
 	submitButton = document.getElementById("submitButton");
 
 	connection = new ServerSocketConnection();
-	// connection.connect();
 
 	connection.onAddCardToHand.add(addWhiteCard);
+	connection.onGameState.add(newGameStateReceived);
 
 	$('#loginForm').ajaxForm({
 		success: function() {
