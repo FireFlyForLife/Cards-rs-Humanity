@@ -414,6 +414,34 @@ impl Handler<messages::incomming::Leavematch> for CahServer {
     }
 }
 
+impl Handler<messages::incomming::StartMatch> for CahServer {
+    type Result = ();
+
+    fn handle(&mut self, msg: messages::incomming::StartMatch, _ctx: &mut Context<Self>) -> Self::Result {
+        if let Some(user_id) = self.get_user_id(&msg.token) {
+            if let Some(room) = self.matches.get_mut().unwrap().get_mut(&msg.match_name) {
+                if let Some(player_in_match) = room.players.iter().find(|elem| elem.player.id == user_id) {
+                    // We found ourselves so there should be at least 1 entry
+                    // Check if we are the czar:
+                    if room.players[0].player.id == player_in_match.player.id && room.match_progress == MatchInProgress::NotStarted {
+                        room.match_progress = MatchInProgress::InProgress;
+                        
+                        let msg_json = json!({
+                            "type": "matchStarted",
+                        });
+                        for every_player in &room.players {
+                            match &every_player.socket_actor{
+                                Some(socket_actor) => socket_actor.do_send(messages::outgoing::Message( msg_json.to_string() )),
+                                None => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl Handler<messages::outgoing::AddCardToHand> for CahServer {
     type Result = ();
 

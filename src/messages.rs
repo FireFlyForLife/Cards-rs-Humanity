@@ -59,17 +59,6 @@ pub mod incomming {
         pub token: CookieToken,
     }
 
-    // /// Send message to specific room
-    // #[derive(Message)]
-    // pub struct ClientMessage {
-    //     /// Id of the client session
-    //     pub token: CookieToken,
-    //     /// Peer message
-    //     pub msg: String,
-    //     /// Room name
-    //     pub room: String,
-    // }
-
     /// List of available rooms request, this doesn't need to be over a websocket actually.
     #[derive(Default)]
     pub struct ListRooms{
@@ -83,6 +72,12 @@ pub mod incomming {
     pub struct SubmitCard {
         pub token: CookieToken,
         pub card_id: CardId,
+    }
+
+    #[derive(Message)]
+    pub struct StartMatch {
+        pub token: CookieToken,
+        pub match_name: String,
     }
 }
 
@@ -115,5 +110,10 @@ pub mod outgoing {
         pub token: CookieToken,
         pub room: String,
         pub player: Player,
+    }
+    
+    #[derive(Message)]
+    pub struct MatchHasStarted {
+        pub room: String,
     }
 }

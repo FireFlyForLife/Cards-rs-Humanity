@@ -5,6 +5,8 @@ var matchList = {};
 var handOfCards = {};
 //type: Array<Player{name, id}>
 var userList = [];
+//type: Player{name, id}
+var ourSelves = null;
 var hasSubmittedCard = false;
 var submitButton = null;
 
@@ -25,6 +27,8 @@ var outgoingMessages = {
 		this.matchId = matchId;
 	},
 	ListMatches: function() {
+	},
+	StartMatch: function() {
 	}
 };
 
@@ -76,6 +80,9 @@ var incommingMessages = {
 	// @arg otherPlayerId the id of the player leaving the match
 	PlayerLeftMatch: function(otherPlayerId) {
 		this.otherPlayerId = otherPlayerId;
+	},
+	// Fired when the server has agreed that the match has started
+	MatchHasStarted: function() {
 	}
 };
 
@@ -127,6 +134,8 @@ class ServerSocketConnection {
 	onGameState = new signals.Signal();
 	onPlayerJoinedMatch = new signals.Signal();
 	onPlayerLeftMatch = new signals.Signal();
+	// Fired when the server has agreed that the match has started
+	onMatchHasStarted = new signals.Signal();
 
 	constructor() {
 		
@@ -150,6 +159,13 @@ class ServerSocketConnection {
 
 	sendJoinMatch(matchId) {
 		var message = {type: "joinMatch", matchId: matchId};
+		var messageJson = JSON.stringify(message);
+
+		this.socketConnection.send(messageJson);
+	}
+
+	sendStartGame() {
+		var message = {type: "startGame"};
 		var messageJson = JSON.stringify(message);
 
 		this.socketConnection.send(messageJson);
@@ -230,14 +246,17 @@ class ServerSocketConnection {
 				this.onPlayerLeftMatch.dispatch(message);
 			break;
 			case "player_joined":
-					if(jsonData["player"] == null || typeof jsonData["player"] != "object") {
-						console.error("EveryoneSubmittedCards message received, but the 'player' property is not a object (or not defined)");
-						break;
-					}
-	
-					var message = new incommingMessages.PlayerJoinedMatch(jsonData["player"]);
-					this.onPlayerJoinedMatch.dispatch(message);
-				break;
+				if(jsonData["player"] == null || typeof jsonData["player"] != "object") {
+					console.error("EveryoneSubmittedCards message received, but the 'player' property is not a object (or not defined)");
+					break;
+				}
+
+				var message = new incommingMessages.PlayerJoinedMatch(jsonData["player"]);
+				this.onPlayerJoinedMatch.dispatch(message);
+			break;
+			case "matchStarted":
+				this.onMatchHasStarted.dispatch();
+			break;
 			default:
 				console.error("Unknown message type send by server. Full JSON: " + JSON.stringify(jsonData));
 			break;
@@ -344,6 +363,8 @@ function newGameStateReceived(data) {
 
 	var message = new incommingMessages.GameState(jsonData["other_players"], jsonData["our_player"], jsonData["hand_of_cards"], jsonData["czar"], jsonData["started"]);
 
+	ourSelves = message.ourPlayer;
+
 	userList = [];
 	$.each(message.otherPlayers, function(i, val) {
 		userList.push(val);
@@ -352,6 +373,9 @@ function newGameStateReceived(data) {
 }
 
 function renderUserList(){
+	var isCzar = userList.length > 0 && userList[0].id == ourSelves.id;
+	$("#startGameButton").prop('disabled', !isCzar);
+
 	$("#userList").html('');
 	$.each(userList, function(i, val) {
 		if(i == 0)
@@ -396,6 +420,10 @@ function refreshMatchList() {
 	})
 }
 
+function startGame() {
+	connection.sendStartGame();
+}
+
 function playerLeft(message) {
 	var index = -1;
 	$.each(userList, function(i, val) {
@@ -415,6 +443,10 @@ function playerJoined(message) {
 	renderUserList();
 }
 
+function matchHasStarted() {
+	alert("Match has been started!");
+}
+
 window.onload = function () {
 	handOfCardsContainer = document.getElementById("handOfCards");
 	submitButton = document.getElementById("submitButton");
@@ -425,7 +457,8 @@ window.onload = function () {
 	connection.onGameState.add(newGameStateReceived);
 	connection.onPlayerLeftMatch.add(playerLeft)
 	connection.onPlayerJoinedMatch.add(playerJoined);
-
+	connection.onMatchHasStarted.add(matchHasStarted);
+	
 	$('#loginForm').ajaxForm({
 		success: function() {
 			alert("Thank you for your login!");

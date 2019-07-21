@@ -224,6 +224,9 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for MyWebSocket {
                             } else {
                                 ctx.text(format!("{:?}", HttpResponse::build(StatusCode::BAD_REQUEST).reason("'card_id' is not a 'number' available in json request").finish()));
                             }
+                        },
+                        "startGame" => {
+                            self.server_addr.do_send(messages::incomming::StartMatch{token: self.cookie_token, match_name: self.match_name.clone()});
                         }
                         _ => {
                             println!("Unknown type of message received in websocket. type: {}, only supported types: submitCard, connectMatch. Full json message: {}", json_message["type"].as_str().unwrap(), text);
