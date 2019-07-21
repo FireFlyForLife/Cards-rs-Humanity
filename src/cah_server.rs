@@ -17,6 +17,12 @@ use sha2::Sha512;
 use sha2::Digest;
 use generic_array::GenericArray;
 
+use maplit::hashmap;
+use str_macro::str;
+
+use rand::seq::SliceRandom;
+
+
 pub type CardId = u64;
 type ShaImpl = Sha512;
 type PasswordHash = GenericArray<u8, <ShaImpl as Digest>::OutputSize>;
@@ -44,8 +50,8 @@ impl Card {
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct CardDeck {
     deck_name: String,
-    black_cards: Vec<Card>,
-    white_cards: Vec<Card>,
+    black_cards: Vec<String>,
+    white_cards: Vec<String>,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -62,7 +68,6 @@ pub struct DatabasePlayer {
     salt: Uuid,
 }
 
-#[derive(Default)]
 pub struct Database {
     card_decks: HashMap<String, CardDeck>,
     players: Vec<DatabasePlayer>,
@@ -78,6 +83,23 @@ impl Database {
         None
     }
 }
+impl Default for Database {
+    fn default() -> Self {
+        let decks = hashmap!{
+            str!("Default") => CardDeck{
+                deck_name: "Default".to_owned(), 
+                black_cards: vec![str!("Question 1 ____"), str!("Question 2 ______")], 
+                white_cards: vec![str!("Awnser card 1"), str!("Awnser card 2"), str!("Awnser card 3"), str!("Awnser card 4"), str!("Awnser card 5"), str!("Awnser card 6"), str!("Awnser card 7")]}
+        };
+        let players = vec![];
+
+        Database{
+            card_decks: decks,
+            players: players,
+        }
+    }
+}
+
 
 #[derive(PartialEq, Eq)]
 pub enum MatchInProgress {
@@ -172,18 +194,6 @@ impl CahServer {
                 if &player.player.id == user_id {
                     return Some(room.0.clone());
                 }
-            }
-        }
-
-        None
-    }
-
-    //TODO: Optimize
-    fn get_cookie_token_from_user_id(&self, user_id: &Uuid) -> Option<CookieToken> {
-        for token_and_uuid in self.sessions.read().unwrap().iter() {
-            let (token, uuid) = token_and_uuid;
-            if uuid == user_id {
-                return Some(token.clone());
             }
         }
 
@@ -417,7 +427,7 @@ impl Handler<messages::incomming::Leavematch> for CahServer {
 impl Handler<messages::incomming::StartMatch> for CahServer {
     type Result = ();
 
-    fn handle(&mut self, msg: messages::incomming::StartMatch, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: messages::incomming::StartMatch, ctx: &mut Context<Self>) -> Self::Result {
         if let Some(user_id) = self.get_user_id(&msg.token) {
             if let Some(room) = self.matches.get_mut().unwrap().get_mut(&msg.match_name) {
                 if room.players.len() >= 3 {
@@ -427,12 +437,22 @@ impl Handler<messages::incomming::StartMatch> for CahServer {
                         if room.players[0].player.id == player_in_match.player.id && room.match_progress == MatchInProgress::NotStarted {
                             room.match_progress = MatchInProgress::InProgress;
                             
+                            let db = self.database.read().unwrap();
+                            let default_card_deck = db.card_decks.get("Default").unwrap();
                             let msg_json = json!({
                                 "type": "matchStarted",
                             });
                             for every_player in &room.players {
                                 match &every_player.socket_actor{
-                                    Some(socket_actor) => socket_actor.do_send(messages::outgoing::Message( msg_json.to_string() )),
+                                    Some(socket_actor) => {
+                                        socket_actor.do_send(messages::outgoing::Message( msg_json.to_string() ));
+
+                                        let random_cards: Vec<_> = default_card_deck.white_cards.choose_multiple(&mut rand::thread_rng(), 3).collect();
+                                        for card_content in random_cards{
+                                            let card = Card{content: card_content.clone(), id: 0};
+                                            ctx.address().do_send(messages::outgoing::AddCardToHand{room: msg.match_name.clone(), player: every_player.player.clone(), card: card});
+                                        }
+                                    },
                                     None => {}
                                 }
                             }

@@ -126,19 +126,17 @@ function sendJoinMatch(joinMatch) {
 }
 
 class ServerSocketConnection {
-	socketConnection = null;
-	onAddCardToHand = new signals.Signal();
-	onPlayerSubmittedCard = new signals.Signal();
-	onEveryoneSubmittedCards = new signals.Signal();
-	onRevealCard = new signals.Signal();
-	onGameState = new signals.Signal();
-	onPlayerJoinedMatch = new signals.Signal();
-	onPlayerLeftMatch = new signals.Signal();
-	// Fired when the server has agreed that the match has started
-	onMatchHasStarted = new signals.Signal();
-
 	constructor() {
-		
+		this.socketConnection = null;
+		this.onAddCardToHand = new signals.Signal();
+		this.onPlayerSubmittedCard = new signals.Signal();
+		this.onEveryoneSubmittedCards = new signals.Signal();
+		this.onRevealCard = new signals.Signal();
+		this.onGameState = new signals.Signal();
+		this.onPlayerJoinedMatch = new signals.Signal();
+		this.onPlayerLeftMatch = new signals.Signal();
+		// Fired when the server has agreed that the match has started
+		this.onMatchHasStarted = new signals.Signal();
 	}
 
 	// @arg submitCard an instance of the type `outgoingMessages.SubmitCard`
