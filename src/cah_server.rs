@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use json::JsonValue;
 use std::sync::RwLock;
-use std::collections::hash_map::Entry;
+use serde_json::json;
 
 use std::u64;
 use crate::CookieToken;
@@ -104,14 +104,15 @@ pub struct Match {
     match_progress: MatchInProgress,
 }
 impl Match {
-    fn remove_player(&mut self, user_id: &Uuid) {
+    fn remove_player(&mut self, user_id: &Uuid) -> Option<PlayerInMatch>{
         let player_pos_option = self.players.iter().position(move |player| player.player.id == *user_id);
         match player_pos_option {
             Some(player_pos) => {
-                self.players.remove(player_pos);
-                //TODO: Send event to the others
+                let player = self.players.remove(player_pos);
+
+                Some(player)
             },
-            None => {}
+            None => { None}
         }
     }
 }
@@ -141,7 +142,7 @@ pub struct GameState {
 /// `CahServer`(Cards against humanity server) manages matches and responsible for coordinating
 /// session. 
 pub struct CahServer {
-    socket_actors: HashMap<CookieToken, Addr<crate::MyWebSocket>>,
+    //socket_actors: HashMap<CookieToken, Addr<crate::MyWebSocket>>,
     // The cookie token to player Uuid, the Uuid is the reprisentation internally.
     sessions: RwLock<HashMap<CookieToken, Uuid>>, //TODO: Clear sessins after a couple hours/days, so the ram doesn't quitely go downwards.
     matches: RwLock<HashMap<String, Match>>,
@@ -156,7 +157,6 @@ impl Default for CahServer {
         matches.insert("Second Room".to_owned(), Match::default());
 
         CahServer {
-            socket_actors: HashMap::new(),
             sessions: Default::default(),
             matches: RwLock::new(matches),
             database: Default::default(),
@@ -270,7 +270,7 @@ impl Handler<messages::incomming::SocketConnectMatch> for CahServer {
 
     fn handle(&mut self, msg: messages::incomming::SocketConnectMatch, ctx: &mut Context<Self>) -> Self::Result {
         // register session with token
-        self.socket_actors.insert(msg.token.clone(), msg.addr);
+        //self.socket_actors.insert(msg.token.clone(), msg.addr);
 
         let user_id;
         if let Some(user_id_) = self.get_user_id(&msg.token) {
@@ -293,6 +293,18 @@ impl Handler<messages::incomming::SocketConnectMatch> for CahServer {
         let player = db_player.unwrap().player.clone();
 
         if let Some(room_name) = self.get_room_from_uuid(&user_id) {
+            //TODO: MyWebSocket stores the room it should be found to, and should be checked here too.
+
+            if let Some(room) = self.matches.get_mut().unwrap().get_mut(&room_name) {
+                let pim_opt = room.players.iter_mut().find(|elem| elem.player.id == user_id);
+                match pim_opt {
+                    Some(pim) => {
+                        pim.socket_actor = Some(msg.addr);
+                    },
+                    None => {},
+                }
+            }
+
             //self.matches.get_mut().unwrap().get_mut(&"Main".to_owned()).unwrap().players.push(player.clone());
 
             // for i in 0..4 {
@@ -334,6 +346,18 @@ impl Handler<messages::incomming::JoinMatch> for CahServer {
                 let player = player_option.unwrap();
                 let player_in_match = PlayerInMatch{player: player.clone(), cards: Vec::new(), submitted_card: None, socket_actor: None };
                 if !already_in_match {
+                    for other_player_in_match in  &room.players{
+                        let join_json = json!({
+                            "type": "player_joined",
+                            "player": player.clone(),
+                        });
+
+                        match &other_player_in_match.socket_actor {
+                            Some(socket_actor) => socket_actor.do_send(messages::outgoing::Message(join_json.to_string())),
+                            None => {}
+                        }
+                    }
+                    
                     room.players.push(player_in_match.clone());
                 }
                 
@@ -362,7 +386,27 @@ impl Handler<messages::incomming::Leavematch> for CahServer {
         if let Some(user_id) = self.get_user_id(&msg.token) {
             match self.matches.get_mut().unwrap().get_mut(&msg.match_name) {
                 Some(room) => {
-                    room.remove_player(&user_id);
+                    let removed_player_opt = room.remove_player(&user_id);
+                    match removed_player_opt {
+                        Some(removed_player) => {
+                            for player in room.players.iter() {
+                                match &player.socket_actor {
+                                    Some(socket) => {
+                                        let leave_json = json!({
+                                            "type": "player_left",
+                                            "player_id": removed_player.player.id,
+                                        });
+                                        
+                                        socket.do_send(messages::outgoing::Message(leave_json.to_string()));
+                                    },
+                                    None => {
+                                        println!("Coudln't send the thing leave message!");
+                                    },
+                                }
+                            }
+                        },
+                        None => {},
+                    }
                 },
                 None => {},
             }
@@ -379,12 +423,12 @@ impl Handler<messages::outgoing::AddCardToHand> for CahServer {
         message["card_id"] = JsonValue::Number(json::number::Number::from(msg.card.id));
         let message_json = json::stringify(message);
 
-        if let Some(cookie_token) = self.get_cookie_token_from_user_id(&msg.player.id) {
-            let addr = &self.socket_actors[&cookie_token];
-            let msg_result = addr.try_send(messages::outgoing::Message(message_json));
-            if msg_result.is_err() {
-                //TODO: Handle this or something
-                debug_assert!(false);
+        if let Some(room) = self.matches.read().unwrap().get(&msg.room) {
+            let user_id = msg.player.id;
+            if let Some(pim) = room.players.iter().find(|elem| elem.player.id == user_id){
+                if let Some(socket_actor) = &pim.socket_actor {
+                    socket_actor.do_send(messages::outgoing::Message(message_json));
+                }
             }
         }
     }
@@ -431,7 +475,7 @@ impl Handler<messages::incomming::Disconnect> for CahServer {
         //     },
         //     _ => {},
         // }
-        let _ = self.socket_actors.remove(&msg.token);
+        // let _ = self.socket_actors.remove(&msg.token);
         
         if let Some(user_id) = self.get_user_id(&msg.token) {
             // remove address

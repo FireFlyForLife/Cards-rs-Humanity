@@ -100,4 +100,20 @@ pub mod outgoing {
         pub player: Player, 
         pub card: Card
     }
+
+    // Send when someone joins your match
+    #[derive(Message)]
+    pub struct PlayerJoinedMatch {
+        pub token: CookieToken,
+        pub room: String,
+        pub player: Player,
+    }
+
+    // Send when someone leaves your match
+    #[derive(Message)]
+    pub struct PlayerLeftMatch {
+        pub token: CookieToken,
+        pub room: String,
+        pub player: Player,
+    }
 }
