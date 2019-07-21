@@ -316,7 +316,10 @@ function newGameStateReceived(data) {
 
 	$("#userList").html('');
 	$.each(message.otherPlayers, function(i, val) {
-		$("#userList").append(val.name + "<br>");
+		if(i == 0)
+			$("#userList").append(val.name + " (czar)<br>");
+		else
+			$("#userList").append(val.name + "<br>");
 	});
 }
 
