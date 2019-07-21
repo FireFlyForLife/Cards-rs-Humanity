@@ -80,26 +80,32 @@ impl Database {
 }
 
 #[derive(PartialEq, Eq)]
-pub enum MatchProgress {
+pub enum MatchInProgress {
     NotStarted,
     InProgress,
 }
-impl Default for MatchProgress {
+impl Default for MatchInProgress {
     fn default() -> Self{
-        MatchProgress::NotStarted
+        MatchInProgress::NotStarted
     }
+}
+
+#[derive(Default, Clone)]
+pub struct PlayerInMatch {
+    player: Player,
+    cards: Vec<String>,
+    submitted_card: Option<String>,
+    socket_actor: Option<Addr<crate::MyWebSocket>>,
 }
 
 #[derive(Default)]
 pub struct Match {
-    players: Vec<Player>,
-    player_hands: HashMap<Uuid, Vec<String>>,
-    player_submitted_card: HashMap<Uuid, String>,
-    match_progress: MatchProgress,
+    players: Vec<PlayerInMatch>,
+    match_progress: MatchInProgress,
 }
 impl Match {
     fn remove_player(&mut self, user_id: &Uuid) {
-        let player_pos_option = self.players.iter().position(move |player| player.id == *user_id);
+        let player_pos_option = self.players.iter().position(move |player| player.player.id == *user_id);
         match player_pos_option {
             Some(player_pos) => {
                 self.players.remove(player_pos);
@@ -107,9 +113,6 @@ impl Match {
             },
             None => {}
         }
-
-        let _really_removed = self.player_hands.remove(user_id);
-        let _ = self.player_submitted_card.remove(user_id);
     }
 }
 
@@ -166,7 +169,7 @@ impl CahServer {
     fn get_room_from_uuid(&self, user_id: &Uuid) -> Option<String> {
         for room in self.matches.read().unwrap().iter() {
             for player in room.1.players.iter() {
-                if &player.id == user_id {
+                if &player.player.id == user_id {
                     return Some(room.0.clone());
                 }
             }
@@ -311,11 +314,17 @@ impl Handler<messages::incomming::JoinMatch> for CahServer {
 
     fn handle(&mut self, msg: messages::incomming::JoinMatch, ctx: &mut Context<Self>) -> Self::Result {
         if let Some(user_id) = self.get_user_id(&msg.token) {
-            //Firstly disconnect from an existing match if we are in there
-            if let Some(room) = self.get_room_from_uuid(&user_id) {
+            let mut already_in_match = false;
+
+            //Firstly disconnect from an existing match if we are switching match.
+            if let Some(room_name) = self.get_room_from_uuid(&user_id) {
                 //ctx.address().do_send(messages::incomming::Leavematch{match_name: room, token: msg.token});
-                let _ = self.handle(messages::incomming::Leavematch{match_name: room, token: msg.token}, ctx);
+                already_in_match = room_name == msg.match_name;
+                if !already_in_match {
+                    let _ = self.handle(messages::incomming::Leavematch{match_name: room_name, token: msg.token}, ctx);
+                }
             }
+            
             let matches = self.matches.get_mut().unwrap();
             if let Some(room) = matches.get_mut(&msg.match_name) {
                 let db = self.database.read().unwrap();
@@ -323,16 +332,17 @@ impl Handler<messages::incomming::JoinMatch> for CahServer {
                 debug_assert!(player_option.is_some(), 
                     "We managed to find ourselves with the call `CahServer::get_user_id()` but we cannot find ourselves in `self.get_player_by_id()`");
                 let player = player_option.unwrap();
-                room.players.push(player.clone());
-
-                room.player_hands.insert(user_id.clone(), Vec::new());
+                let player_in_match = PlayerInMatch{player: player.clone(), cards: Vec::new(), submitted_card: None, socket_actor: None };
+                if !already_in_match {
+                    room.players.push(player_in_match.clone());
+                }
                 
                 let game_state = GameState{
-                    other_players: room.players.clone(), 
+                    other_players: room.players.iter().map(|elem| elem.player.clone()).collect(), 
                     our_player: player.clone(), 
-                    hand_of_cards: room.player_hands[&user_id].clone(),
-                    czar: room.players[0].id.clone(),
-                    started: room.match_progress == MatchProgress::InProgress};
+                    hand_of_cards: player_in_match.cards.clone(),
+                    czar: room.players[0].player.id.clone(),
+                    started: room.match_progress == MatchInProgress::InProgress};
 
                 Ok(game_state)
             } else {
@@ -391,7 +401,11 @@ impl Handler<messages::incomming::SubmitCard> for CahServer {
                 Some(room_name) => {
                     println!("room: {}. player: {} submitted the card: {}", room_name, &user_id, msg.card_id);
                     let room = self.matches.get_mut().unwrap().get_mut(&room_name).unwrap();
-                    let _ = room.player_submitted_card.entry(user_id).or_insert("wasd".to_owned());
+                    if let Some(pid_player) = room.players.iter_mut().find(|elem| elem.player.id == user_id) {
+                        let _ = pid_player.submitted_card.get_or_insert("wasd".to_owned());
+                    } else {
+                        debug_assert!(false, "We managed to find ourselves with `self.get_user_id()`, however not while finding ourselves");
+                    }
                 }
                 None => {
                     println!("NO ROOM FOUND FOR PLAYER: {} tries to submit the card: {}", &user_id, msg.card_id);
@@ -424,7 +438,7 @@ impl Handler<messages::incomming::Disconnect> for CahServer {
             if self.sessions.get_mut().unwrap().remove(&msg.token).is_some() {
                 // remove session from all rooms
                 for (_name, room) in self.matches.get_mut().unwrap() {
-                    room.players.retain(|elem| elem.id != user_id);
+                    room.players.retain(|elem| elem.player.id != user_id);
                 }
             }
         }
