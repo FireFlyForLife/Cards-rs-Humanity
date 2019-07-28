@@ -55,3 +55,7 @@
 .submittedCard {
 	background-color: red;
 }
+
+.developerLoginPresets {
+	display: inline-block;
+}

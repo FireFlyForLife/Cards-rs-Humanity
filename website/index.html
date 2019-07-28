@@ -19,6 +19,24 @@
   Welcome to the HTML index page!<br><br>
 
   <div class="divBorder">
+    <div id="developerLoginPresets" class="divBorder">
+      <script>
+        function manuallyRegisterAndLogin(email, username, password) {
+          $('#registerEmailField').val(email);
+          $('#registerUsernameField').val(username);
+          $('#loginUsernameField').val(username);
+          $('#registerPasswordField').val(password);
+          $('#loginPasswordField').val(password);
+
+          $('#registerForm').ajaxSubmit({complete: function() {
+            $('#loginForm').ajaxSubmit();
+          }});
+        }
+      </script>
+      <button onclick="manuallyRegisterAndLogin('abc@gmail.com', 'maiko', '123')">Register/Login player maiko</button>
+      <button onclick="manuallyRegisterAndLogin('aaa@gmail.com', 'a', 'a')">Register/Login player a</button>
+      <button onclick="manuallyRegisterAndLogin('bbb@gmail.com', 'b', 'b')">Register/Login player b</button>
+    </div>
     Login screen:<br>
     <form id="loginForm" action="api/login" method="post">
       <label for="loginUsernameField">Username/Email:</label>
