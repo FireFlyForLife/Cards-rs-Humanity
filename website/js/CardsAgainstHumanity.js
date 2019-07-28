@@ -1,4 +1,3 @@
-var handOfCardsContainer = null;
 //type: HashMap<buttonElement, matchName>
 var matchList = {};
 //type: HashMap<cardElement, cardId>
@@ -7,7 +6,13 @@ var handOfCards = {};
 var userList = [];
 //type: Player{name, id}
 var ourSelves = null;
+//type: HashMap<cardId, {cardElement, content}>
+var othersSubmittedCards = {};
+
+var handOfCardsContainer = null;
 var hasSubmittedCard = false;
+var everyoneHasSubmittedCards = false;
+var hasSubmittedCzarChoice = false;
 var submitButton = null;
 
 var connection = null;
@@ -29,6 +34,10 @@ var outgoingMessages = {
 	ListMatches: function() {
 	},
 	StartMatch: function() {
+	},
+	// @arg cardId the card id of the card which is the best
+	CzarCardChoice: function(cardId) {
+		this.cardId = cardId;
 	}
 };
 
@@ -83,6 +92,10 @@ var incommingMessages = {
 	},
 	// Fired when the server has agreed that the match has started
 	MatchHasStarted: function() {
+	},
+	// @arg cardId the card id of the card which is the best
+	CzarCardChoice: function(cardId) {
+		this.cardId = cardId;
 	}
 };
 
@@ -137,11 +150,20 @@ class ServerSocketConnection {
 		this.onPlayerLeftMatch = new signals.Signal();
 		// Fired when the server has agreed that the match has started
 		this.onMatchHasStarted = new signals.Signal();
+		this.onCzarCardChoice = new signals.Signal();
 	}
 
 	// @arg submitCard an instance of the type `outgoingMessages.SubmitCard`
 	sendSubmitCard(submitCard) {
 		var message = {type: "submitCard", card_id: submitCard.cardId};
+		var messageJson = JSON.stringify(message);
+
+		this.socketConnection.send(messageJson);
+	}
+
+	// @arg czarCardChoice an instance of the type `outgoingMessages.CzarCardChoice`
+	sendCzarCardChoice(czarCardChoice) {
+		var message = {type: "czarChoice", card_id: czarCardChoice.cardId};
 		var messageJson = JSON.stringify(message);
 
 		this.socketConnection.send(messageJson);
@@ -212,7 +234,7 @@ class ServerSocketConnection {
 				var message = new incommingMessages.AddCardToHand(jsonData["card_content"], jsonData["card_id"]);
 				this.onAddCardToHand.dispatch(message);
 			break;
-			case "everyoneSubmittedCards":
+			case "everyone_submitted":
 				if(jsonData["card_ids"] == null || !Array.isArray(jsonData["card_ids"])) {
 					console.error("EveryoneSubmittedCards message received, but the 'card_ids' property is not an array (or not defined)");
 					break;
@@ -223,11 +245,11 @@ class ServerSocketConnection {
 			break;
 			case "revealCard":
 				if(jsonData["card_content"] == null || typeof jsonData["card_content"] != "string") {
-					console.error("EveryoneSubmittedCards message received, but the 'card_content' property is not a string (or not defined)");
+					console.error("revealCard message received, but the 'card_content' property is not a string (or not defined)");
 					break;
 				}
 				if(jsonData["card_id"] == null || typeof jsonData["card_id"] != "number") {
-					console.error("EveryoneSubmittedCards message received, but the 'card_id' property is not a number (or not defined)");
+					console.error("revealCard message received, but the 'card_id' property is not a number (or not defined)");
 					break;
 				}
 
@@ -254,6 +276,15 @@ class ServerSocketConnection {
 			break;
 			case "matchStarted":
 				this.onMatchHasStarted.dispatch();
+			break;
+			case "czar_choice":
+				if(jsonData["card_id"] == null || typeof jsonData["card_id"] != "number") {
+					console.error("CzarCardChoice message received, but the 'card_id' property is not a number (or not defined)");
+					break;
+				}
+
+				var message = new incommingMessages.CzarCardChoice(jsonData["card_id"]);
+				this.onCzarCardChoice.dispatch(message);
 			break;
 			default:
 				console.error("Unknown message type send by server. Full JSON: " + JSON.stringify(jsonData));
@@ -377,7 +408,7 @@ function renderUserList(){
 	$("#userList").html('');
 	$.each(userList, function(i, val) {
 		if(i == 0)
-			$("#userList").append(val.name + " (czar)<br>");
+			$("#userList").append(val.name + " (op)<br>");
 		else
 			$("#userList").append(val.name + "<br>");
 	});
@@ -415,7 +446,7 @@ function refreshMatchList() {
 				});
 			$("#matches").append(val).append(btn).append("<br>");
 		});
-	})
+	});
 }
 
 function startGame() {
@@ -442,20 +473,94 @@ function playerJoined(message) {
 }
 
 function matchHasStarted() {
-	alert("Match has been started!");
+	// alert("Match has been started!");
+}
+
+function everyoneSubmittedCards(msg) {
+	var ids = msg.cardIds;
+
+	$("#handOfCards").hide();
+	$("#cardRevealing").show();
+
+	everyoneHasSubmittedCards = true;
+	submitButton.disabled = false;
+
+	$.each(ids, function(i, id){
+		var card = document.createElement('div');
+		card.classList.add("downfacingCard");
+		var textNode = document.createTextNode("Click to reveal...");
+		card.appendChild(textNode);
+		othersSubmittedCards[id] = {textElement: card, content: null};
+		
+		var copyId = id;
+		card.onclick = function () {
+			if (othersSubmittedCards[copyId].content == null) {
+				connection.sendRevealCard(new outgoingMessages.RevealCard(copyId));
+			}
+		}
+
+		$("#cardRevealing").append(card);
+	});
+}
+
+function revealOthersCard(msg) {
+	var id = msg.cardId;
+	var content = msg.cardContent;
+
+	if(othersSubmittedCards[id].content == null) {
+		othersSubmittedCards[id].content = content;
+
+		othersSubmittedCards[id].textElement.classList.remove("downfacingCard");
+		othersSubmittedCards[id].textElement.classList.add("revealedCard");
+		othersSubmittedCards[id].textElement.innerText = content;
+
+		othersSubmittedCards[id].textElement.onclick = function() {
+			let everythingRevealed = false;
+			$.each(othersSubmittedCards, function(i, val){
+				everythingRevealed |= val.content != null;
+			});
+			
+			if(everythingRevealed) {
+				deselectCards();
+				selectCard(this);
+			} else {
+				connection.sendRevealCard(new outgoingMessages.RevealCard(id));
+			}
+		}
+	}
+}
+
+function czarCardChoiceReceived(msg) {
+	var cardId = msg.cardId;
+	var cardElemObj = othersSubmittedCards[cardId];
+	if(cardElemObj == null) {
+		console.error("ERROR: Cannot find a card with the id: " + cardId);
+		return;
+	}
+	cardElemObj.textElement.classList.add("chosenCard");
+
+	window.setTimeout(function() {
+		//This should be a seperate event I think
+		newRoundStarts();
+	}, 2000);
 }
 
 window.onload = function () {
 	handOfCardsContainer = document.getElementById("handOfCards");
 	submitButton = document.getElementById("submitButton");
 
+	$("#cardRevealing").hide();
+
 	connection = new ServerSocketConnection();
 
 	connection.onAddCardToHand.add(addWhiteCard);
 	connection.onGameState.add(newGameStateReceived);
-	connection.onPlayerLeftMatch.add(playerLeft)
+	connection.onPlayerLeftMatch.add(playerLeft);
 	connection.onPlayerJoinedMatch.add(playerJoined);
 	connection.onMatchHasStarted.add(matchHasStarted);
+	connection.onEveryoneSubmittedCards.add(everyoneSubmittedCards);
+	connection.onRevealCard.add(revealOthersCard);
+	connection.onCzarCardChoice.add(czarCardChoiceReceived);
 	
 	$('#loginForm').ajaxForm({
 		success: function() {
@@ -484,30 +589,69 @@ function getSelectedCard() {
 	}
 }
 
-function submitSelection() {
-	if (hasSubmittedCard) {
-		alert("You have already submitted your card!");
-		return;
+//From the selected card Element instance
+function getOthersSubmittedCardId(textElement) {
+	for (key in othersSubmittedCards) {
+		if(othersSubmittedCards[key].textElement == textElement) {
+			return parseInt(key);
+		}
 	}
 
-	var selectedCard = getSelectedCard();
-	if (selectedCard === null) {
-		alert("No card is selected! please select one by clicking on it!");
-	} else {
-		var cardId = handOfCards[selectedCard];
-		if(cardId == null) {
-			console.error("Selected card: ", selectCard, "Doesn't have an id");
+	return null;
+}
+
+function submitSelection() {
+	var canSubmitCzarChoice = (! $.isEmptyObject(othersSubmittedCards) );
+	if(canSubmitCzarChoice) {
+		if(/* !isCzar() */ false) {
 			return;
 		}
-		selectedCard.classList.add("submittedCard");
-		hasSubmittedCard = true;
-		submitButton.disabled = true;
 
-		connection.sendSubmitCard(new outgoingMessages.SubmitCard(cardId));
+		var selectedCard = getSelectedCard();
+		if (selectedCard === null) {
+			alert("No card is selected! please select one by clicking on it!");
+		} else {
+			var cardId = getOthersSubmittedCardId(selectedCard);
+			if(cardId == null) {
+				console.error("Selected card: ", selectCard, "Doesn't have an id");
+				return;
+			}
+
+			connection.sendCzarCardChoice(new outgoingMessages.CzarCardChoice(cardId));
+
+			selectedCard.classList.add("submittedCard");
+			submitButton.disabled = true;
+		}
+	} else {
+		if (hasSubmittedCard) {
+			alert("You have already submitted your card!");
+			return;
+		}
+
+		var selectedCard = getSelectedCard();
+		if (selectedCard === null) {
+			alert("No card is selected! please select one by clicking on it!");
+		} else {
+			var cardId = handOfCards[selectedCard];
+			if(cardId == null) {
+				console.error("Selected card: ", selectCard, "Doesn't have an id");
+				return;
+			}
+			selectedCard.classList.add("submittedCard");
+			hasSubmittedCard = true;
+			submitButton.disabled = true;
+
+			connection.sendSubmitCard(new outgoingMessages.SubmitCard(cardId));
+		}
 	}
 }
 
 function newRoundStarts() {
 	hasSubmittedCard = false;
+	everyoneHasSubmittedCards = false;
+	hasSubmittedCzarChoice = false;
 	submitButton.disabled = false;
+	othersSubmittedCards = {};
+	$("#cardRevealing").hide();
+	$("#handOfCards").show();
 }

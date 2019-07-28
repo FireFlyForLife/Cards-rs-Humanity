@@ -20,6 +20,30 @@
 	display: inline-block;
 }
 
+.downfacingCard {
+	max-height: 400px;
+	max-width:  200px;
+	background-color: darkgray;
+	margin: 15px 8px;
+	padding: 4px;
+	border: solid;
+	display: inline-block;
+}
+
+.revealedCard {
+	max-height: 400px;
+	max-width:  200px;
+	background-color: lightgray;
+	margin: 15px 8px;
+	padding: 4px;
+	border: solid;
+	display: inline-block;
+}
+
+.chosenCard {
+	background-color: aqua;
+}
+
 .selectedCard {
 	border-color: blue;
 }

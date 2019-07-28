@@ -32,6 +32,13 @@ pub mod incomming {
         pub token: CookieToken,
     }
 
+    #[derive(Message)]
+    pub struct RevealCard {
+        pub token: CookieToken,
+        pub match_name: String,
+        pub card_id: CardId,
+    }
+
     // #[derive(Message)]
     // #[rtype(result="Error<(), String>")]
     pub struct RegisterAccount {
@@ -72,12 +79,20 @@ pub mod incomming {
     pub struct SubmitCard {
         pub token: CookieToken,
         pub card_id: CardId,
+        // pub card_content: String,
     }
 
     #[derive(Message)]
     pub struct StartMatch {
         pub token: CookieToken,
         pub match_name: String,
+    }
+
+    #[derive(Message)]
+    pub struct CzarChoice {
+        pub token: CookieToken,
+        pub match_name: String,
+        pub card_id: CardId,
     }
 }
 
@@ -86,7 +101,7 @@ pub mod outgoing {
     use crate::messages::*;
 
     /// Chat server sends this messages to session
-    #[derive(Message)]
+    #[derive(Message, Clone)]
     pub struct Message(pub String);
 
     #[derive(Message)]

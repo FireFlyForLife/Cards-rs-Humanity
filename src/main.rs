@@ -200,7 +200,6 @@ impl Actor for MyWebSocket {
 impl StreamHandler<ws::Message, ws::ProtocolError> for MyWebSocket {
     fn handle(&mut self, msg: ws::Message, ctx: &mut Self::Context) {
         // process websocket messages
-        println!("WS: {:?}", msg);
         match msg {
             ws::Message::Ping(msg) => {
                 self.hb = Instant::now();
@@ -210,6 +209,8 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for MyWebSocket {
                 self.hb = Instant::now();
             }
             ws::Message::Text(text) => {
+                println!("WS: {:?}", &text);
+
                 if let Ok(json_message) = json::parse(&text) {
                     if !json_message["type"].is_string() {
                         ctx.text(format!("{:?}", HttpResponse::build(StatusCode::BAD_REQUEST).reason("'type' is not available in json request").finish()));
@@ -224,12 +225,39 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for MyWebSocket {
                             } else {
                                 ctx.text(format!("{:?}", HttpResponse::build(StatusCode::BAD_REQUEST).reason("'card_id' is not a 'number' available in json request").finish()));
                             }
+                            // if json_message["card_content"].is_string() {
+                            //     let card_content: String = json_message["card_id"].as_str().unwrap().to_string();
+                            //     let submit_card = messages::incomming::SubmitCard{token: self.cookie_token, card_id: card_content};
+                            //     self.server_addr.do_send(submit_card);
+                            // } else {
+                            //     ctx.text(format!("{:?}", HttpResponse::build(StatusCode::BAD_REQUEST).reason("'card_content' is not a 'string' available in json request").finish()));
+                            // }
                         },
                         "startGame" => {
                             self.server_addr.do_send(messages::incomming::StartMatch{token: self.cookie_token, match_name: self.match_name.clone()});
-                        }
+                        },
+                        "revealCard" => {
+                            if json_message["card_id"].is_number() {
+                                let card_id: CardId = json_message["card_id"].as_number().unwrap().into();
+                                // println!("Player {} has submitted card with id:{}", self.user_id, json_message["card_id"].as_number().unwrap());
+                                let msg = messages::incomming::RevealCard{token: self.cookie_token.clone(), match_name: self.match_name.clone(), card_id: card_id};
+                                self.server_addr.do_send(msg);
+                            } else {
+                                ctx.text(format!("{:?}", HttpResponse::build(StatusCode::BAD_REQUEST).reason("'card_id' is not a 'number' available in json request").finish()));
+                            }
+                        },
+                        "czarChoice" => {
+                            if json_message["card_id"].is_number() {
+                                let card_id: CardId = json_message["card_id"].as_number().unwrap().into();
+                                // println!("Player {} has submitted card with id:{}", self.user_id, json_message["card_id"].as_number().unwrap());
+                                let czar_choice = messages::incomming::CzarChoice{token: self.cookie_token, match_name: self.match_name.clone(), card_id: card_id };
+                                self.server_addr.do_send(czar_choice);
+                            } else {
+                                ctx.text(format!("{:?}", HttpResponse::build(StatusCode::BAD_REQUEST).reason("'card_id' is not a 'number' available in json request").finish()));
+                            }
+                        },
                         _ => {
-                            println!("Unknown type of message received in websocket. type: {}, only supported types: submitCard, connectMatch. Full json message: {}", json_message["type"].as_str().unwrap(), text);
+                            println!("Unknown type of message received in websocket. type: {}, only supported types: submitCard, startGame. Full json message: {}", json_message["type"].as_str().unwrap(), text);
                         }
                     }
 
@@ -237,8 +265,12 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for MyWebSocket {
                     ctx.text(text);
                 }
             },
-            ws::Message::Binary(bin) => ctx.binary(bin),
-            ws::Message::Close(_) => {
+            ws::Message::Binary(bin) => { 
+                println!("WS bin: {:?}", &bin);                
+                ctx.binary(bin) 
+            },
+            ws::Message::Close(close_reason) => {
+                println!("WS close: {:?}", &close_reason);
                 ctx.stop();
             }
             ws::Message::Nop => (),
