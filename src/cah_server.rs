@@ -11,6 +11,7 @@ use std::sync::Arc;
 use serde_json::json;
 use std::collections::hash_map::Entry;
 use num::PrimInt;
+use std::time::Duration;
 
 use std::u64;
 use crate::CookieToken;
@@ -89,7 +90,7 @@ impl Database {
 }
 impl Default for Database {
     fn default() -> Self {
-        let mut card_id_counter: u64 = 11;
+        let card_id_counter: u64 = 11;
         let decks = hashmap!{
             str!("Default") => CardDeck{
                 deck_name: str!("Default"), 
@@ -125,6 +126,7 @@ impl Default for MatchInProgress {
 pub struct PlayerInMatch {
     player: Player,
     cards: Vec<Card>,
+    points: u32,
     submitted_card: Option<Card>,
     socket_actor: Option<Addr<crate::MyWebSocket>>,
 }
@@ -145,12 +147,23 @@ fn increment_and_wrap<T: PrimInt>(value: T, wrap_from: T, wrap_to: T) -> T {
     }
 }
 
-#[derive(Default)]
 pub struct Match {
     players: Vec<PlayerInMatch>,
     match_progress: MatchInProgress,
     active_decks: Vec<String>,
     czar: Uuid,
+    points_to_win: u32,
+}
+impl Default for Match{
+    fn default() -> Self {
+        Match {
+            players: Default::default(),
+            match_progress: Default::default(),
+            active_decks: Default::default(),
+            czar: Uuid::nil(),
+            points_to_win: 7,
+        }
+    }
 }
 impl Match {
     fn remove_player(&mut self, user_id: &Uuid) -> Option<PlayerInMatch>{
@@ -473,14 +486,6 @@ impl Handler<messages::incomming::SocketConnectMatch> for CahServer {
                 }
             }
 
-            //self.matches.get_mut().unwrap().get_mut(&"Main".to_owned()).unwrap().players.push(player.clone());
-
-            // for i in 0..4 {
-            //     //TODO: Not hardcode cards...
-            //     let card = Card{content: format!("A card from the server! {}", i), id: i};
-            //     ctx.address().do_send(messages::outgoing::AddCardToHand{room: room_name.clone(), player: player.clone(), card: card});
-            // }
-
             Ok(())
         } else {
             Err("Could not find a match where this user is in, is JoinMatch not send beforehand?".to_owned())
@@ -512,7 +517,7 @@ impl Handler<messages::incomming::JoinMatch> for CahServer {
                 debug_assert!(player_option.is_some(), 
                     "We managed to find ourselves with the call `CahServer::get_user_id()` but we cannot find ourselves in `self.get_player_by_id()`");
                 let player = player_option.unwrap();
-                let player_in_match = PlayerInMatch{player: player.clone(), cards: Vec::new(), submitted_card: None, socket_actor: None };
+                let player_in_match = PlayerInMatch{player: player.clone(), cards: Vec::new(), points: 0, submitted_card: None, socket_actor: None };
                 if !already_in_match {
                     room.players.push(player_in_match.clone());
 
@@ -742,7 +747,7 @@ impl Handler<messages::incomming::RevealCard> for CahServer {
 impl Handler<messages::incomming::CzarChoice> for CahServer {
     type Result = ();
 
-    fn handle(&mut self, msg: messages::incomming::CzarChoice, _: &mut Context<Self>) {
+    fn handle(&mut self, msg: messages::incomming::CzarChoice, ctx: &mut Context<Self>) {
         if let Some(user_id) = self.get_user_id(&msg.token) {
             let matches = self.matches.get_mut().unwrap();
             match matches.get_mut(&msg.match_name) {
@@ -757,12 +762,69 @@ impl Handler<messages::incomming::CzarChoice> for CahServer {
                         let card = card_opt.unwrap();
                         println!("room: {}. czar player: {} choose the card: {:?}", &msg.match_name, &user_id, &card.id);
 
-                        let everyone_submitted_json = json!({
+                        let czar_submitted_json = json!({
                             "type": "czar_choice",
                             "card_id": card.id,
                         });
-                        let everyone_submitted_msg = messages::outgoing::Message(everyone_submitted_json.to_string());
-                        room.send_to_all_players(everyone_submitted_msg);
+                        let czar_submitted_msg = messages::outgoing::Message(czar_submitted_json.to_string());
+                        room.send_to_all_players(czar_submitted_msg);
+
+                        let victorious_player_opt = room.players.iter_mut().find(|player_in_match| match &player_in_match.submitted_card {
+                            Some(submitted_card) => submitted_card.id == card.id,
+                            None => false,
+                        });
+                        
+                        debug_assert!(victorious_player_opt.is_some());
+                        if let Some(victorious_player) = victorious_player_opt {
+                            victorious_player.points += 1;
+
+                            if victorious_player.points >= room.points_to_win {
+                                let player_won_msg = json!({
+                                    "type": "playerWon",
+                                    "player_id": victorious_player.player.id,
+                                });
+                                room.send_to_all_players(messages::outgoing::Message(player_won_msg.to_string()));
+                            }
+
+                            ctx.run_later(Duration::from_millis(3000), move |cah, _ctx| {
+                                let matches = cah.matches.get_mut().unwrap();
+                                match matches.get_mut(&msg.match_name) {
+                                    Some(room) => { 
+                                        for player_in_match in &mut room.players {
+                                            player_in_match.submitted_card = None;
+                                        }
+
+                                        let new_round_json = json!({
+                                            "type": "newRound"
+                                        });
+                                        room.send_to_all_players(messages::outgoing::Message(new_round_json.to_string()));
+
+                                        let czar_index_opt = room.players.iter().position(|pim| &pim.player.id == &room.czar);
+                                        match czar_index_opt {
+                                            Some(czar_index) => {
+                                                if !room.players.is_empty() {
+                                                    let new_czar_index = increment_and_wrap(czar_index, room.players.len(), 0);
+                                                    room.czar = room.players[new_czar_index].player.id;
+                                                }
+                                            },
+                                            None => { 
+                                                // Right now, if it can't find the last czar, it will default to p1, however thats unfair for the last player.
+                                                // However, this should "never" happen as when the player disconnects it already gets handled and czar gets handed over.
+                                                // Which makes this soludion here solid.
+                                                if !room.players.is_empty() { room.czar = room.players[0].player.id; } 
+                                            }
+                                        }
+
+                                        let new_czar_json = json!({
+                                            "type": "newCzar",
+                                            "czar": room.czar
+                                        });
+                                        room.send_to_all_players(messages::outgoing::Message(new_czar_json.to_string()));
+                                    },
+                                    None => {},
+                                }              
+                            });
+                        }
                     }
                 }
                 None => {

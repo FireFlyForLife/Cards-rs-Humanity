@@ -3,6 +3,7 @@ use crate::CookieToken;
 use actix::prelude::*;
 use std::string::String;
 use crate::MyWebSocket;
+use uuid::Uuid;
 
 // Containing all messages which will be commin in from a client to the server
 pub mod incomming {
@@ -130,5 +131,22 @@ pub mod outgoing {
     #[derive(Message)]
     pub struct MatchHasStarted {
         pub room: String,
+    }
+
+    #[derive(Message)]
+    pub struct PlayerWonMatch {
+        pub room: String,
+        pub player: Player,
+    }
+
+    #[derive(Message)]
+    pub struct NewRoundStarted {
+        pub room: String,
+    }
+
+    #[derive(Message)]
+    pub struct NewCzar {
+        pub room: String,
+        pub id: Uuid,
     }
 }

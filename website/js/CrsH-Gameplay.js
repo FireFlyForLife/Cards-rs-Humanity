@@ -72,6 +72,10 @@ function refreshMatchList() {
 	});
 }
 
+function resetMatch() {
+	//TODO: Actually reset everything
+}
+
 function _addWhiteCard(msg) {
 	var cardId = msg.cardId;
 
@@ -85,10 +89,18 @@ function _addWhiteCard(msg) {
 function _newGameStateReceived(gameStateMessage) {
 	ourSelves = gameStateMessage.ourPlayer;
 
+	czarId = gameStateMessage.czar;
+
 	userList = [];
 	$.each(gameStateMessage.otherPlayers, function(i, val) {
 		userList.push(val);
 	});
+}
+
+function _newCzar(msg) {
+	var czar = msg.czar;
+
+	czarId = czar;
 }
 
 function _playerLeft(message) {
@@ -134,15 +146,10 @@ function _revealOthersCard(msg) {
 }
 
 function _czarCardChoiceReceived(msg) {
-	window.setTimeout(function() {
-		//This should be a seperate event I think
-		newRoundStarts();
-	}, 2000);
+
 }
 
 $(document).ready(function () {
-	$("#cardRevealing").hide();
-
 	connection = new ServerSocketConnection();
 
 	connection.onAddCardToHand.add(_addWhiteCard);
@@ -153,13 +160,18 @@ $(document).ready(function () {
 	connection.onEveryoneSubmittedCards.add(_everyoneSubmittedCards);
 	connection.onRevealCard.add(_revealOthersCard);
 	connection.onCzarCardChoice.add(_czarCardChoiceReceived);
+	connection.onNewRound.add(_newRoundStarts);
+	connection.onPlayerWon.add(_playerHasWon);
+	connection.onNewCzar.add(_newCzar);
 });
 
-function newRoundStarts() {
+function _playerHasWon(msg) {
+	resetMatch();
+}
+
+function _newRoundStarts() {
 	hasSubmittedCard = false;
 	everyoneHasSubmittedCards = false;
 	hasSubmittedCzarChoice = false;
 	everyonesSubmittedCards = {};
-	$("#cardRevealing").hide();
-	$("#handOfCards").show();
 }

@@ -13,6 +13,8 @@ var cardElementToCardId = {};
 var revealedCardIdToElement = {};
 
 $(document).ready(function() {
+	$("#cardRevealing").hide();
+
 	//Connect listeners to the gameplay events:
 	connection.onGameState.add(onNewGameStateReceived);
 	connection.onPlayerJoinedMatch.add(onPlayerJoined);
@@ -20,6 +22,10 @@ $(document).ready(function() {
 	connection.onEveryoneSubmittedCards.add(onEveryoneSubmittedCards);
 	connection.onRevealCard.add(onRevealOthersCard);
 	connection.onCzarCardChoice.add(onCzarCardChoiceReceived);
+	connection.onNewRound.add(onNewRoundStarted);
+	connection.onPlayerWon.add(onPlayerWon);
+	connection.onNewCzar.add(onNewCzar);
+	connection.onMatchHasStarted.add(onMatchHasStarted);
 
 	//Create forms which don't redirect you to another page:
     $('#loginForm').ajaxForm({
@@ -56,11 +62,54 @@ function renderUserList(){
 
 	$("#userList").html('');
 	$.each(userList, function(i, val) {
-		if(i == 0)
-			$("#userList").append(val.name + " (op)<br>");
-		else
-			$("#userList").append(val.name + "<br>");
+		var czarString = val.id == czarId ? " (czar)" : "";
+		var opString = i == 0 ? " (op)" : "";
+
+		$("#userList").append(val.name + czarString + opString + "<br>");
 	});
+}
+
+function onNewRoundStarted() {
+	$("#cardRevealing").hide();
+	$("#handOfCards").show();
+	
+	$.each($("#handOfCards"), function(i, btn) {
+		btn.classList.remove("submittedCard");
+		btn.classList.remove("selectedCard");
+	});
+
+	if(isCzar()) {
+		$("#submitButton").attr("disabled", true);
+	} else {
+		$("#submitButton").attr("disabled", false);
+	}
+}
+
+function onMatchHasStarted() {
+	if(isCzar()) {
+		$("#submitButton").attr("disabled", true);
+	} else {
+		$("#submitButton").attr("disabled", false);
+	}
+}
+
+function onPlayerWon(msg) {
+	var playerId = msg.playerId;
+
+	var playerName = userList.find(function(nameIdPair, i) {
+		return nameIdPair.id == playerId;
+	})
+	alert("player with the name: " + playerName + " has won the match!");
+}
+
+function onNewCzar(msg) {
+	if(isCzar()) {
+		$("#submitButton").attr("disabled", true);
+	} else {
+		$("#submitButton").attr("disabled", false);
+	}
+
+	renderUserList();
 }
 
 function onEveryoneSubmittedCards(msg) {
@@ -68,6 +117,8 @@ function onEveryoneSubmittedCards(msg) {
 
 	$("#handOfCards").hide();
 	$("#cardRevealing").show();
+
+	$("#cardRevealing").html("");
 
 	$("#submitButton").attr("disabled",  false);
 

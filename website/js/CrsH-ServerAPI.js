@@ -84,6 +84,17 @@ var incommingMessages = {
 	// @arg cardId the card id of the card which is the best
 	CzarCardChoice: function(cardId) {
 		this.cardId = cardId;
+	},
+	// @arg playerId the playerId of the player who won the match
+	PlayerWon: function(playerId) {
+		this.playerId = playerId;
+	},
+	// A new round has started
+	NewRound: function() {
+	},
+	// @arg czar the id of the player who is now the czar
+	NewCzar: function(czar) {
+		this.czar = czar;
 	}
 };
 
@@ -193,6 +204,9 @@ class ServerSocketConnection {
 		// Fired when the server has agreed that the match has started
 		this.onMatchHasStarted = new signals.Signal();
 		this.onCzarCardChoice = new signals.Signal();
+		this.onPlayerWon = new signals.Signal();
+		this.onNewRound = new signals.Signal();
+		this.onNewCzar = new signals.Signal();
 	}
 
 	// @arg submitCard an instance of the type `outgoingMessages.SubmitCard`
@@ -296,6 +310,21 @@ class ServerSocketConnection {
 
 				var message = new incommingMessages.CzarCardChoice(jsonData["card_id"]);
 				this.onCzarCardChoice.dispatch(message);
+			break;
+			case "playerWon":
+				if(!validateJsonProperty(jsonData, 'player_id', 'string', "PlayerWon message received,")) { return; }
+				
+				var message = new incommingMessages.PlayerWon(jsonData["player_id"]);
+				this.onPlayerWon.dispatch(message);
+			break;
+			case "newRound":
+				this.onNewRound.dispatch();
+			break;
+			case "newCzar": 
+				if(!validateJsonProperty(jsonData, 'czar', 'string', "NewCzar message received,")) { return; }
+
+				var message = new incommingMessages.NewCzar(jsonData["czar"]);
+				this.onNewCzar.dispatch(message);
 			break;
 			default:
 				console.error("Unknown message type send by server. Full JSON: " + JSON.stringify(jsonData));
