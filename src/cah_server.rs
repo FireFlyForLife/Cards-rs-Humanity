@@ -12,7 +12,10 @@ use serde_json::json;
 use std::collections::hash_map::Entry;
 use num::PrimInt;
 use std::time::Duration;
+use rusqlite::NO_PARAMS;
+use rusqlite::params;
 
+use base64::display::Base64Display;
 use std::u64;
 use crate::CookieToken;
 use crate::messages;
@@ -25,6 +28,10 @@ use maplit::hashmap;
 use str_macro::str;
 
 use rand::seq::SliceRandom;
+
+use r2d2_sqlite;
+use r2d2_sqlite::SqliteConnectionManager;
+use crate::db::Pool;
 
 
 pub type CardId = u64;
@@ -331,6 +338,7 @@ pub struct CahServer {
     matches: RwLock<HashMap<String, Match>>,
     database: RwLock<Database>,
     card_cache: RwLock<CardDeckCache>,
+    connection_pool: Pool,
 }
 
 impl Default for CahServer {
@@ -344,6 +352,9 @@ impl Default for CahServer {
         matches.insert("Main".to_owned(), main_match);
         matches.insert("Second Room".to_owned(), second_room_match);
 
+        let manager = SqliteConnectionManager::file("db/some.db");
+        let pool = Pool::new(manager).unwrap();
+
         let db: Database = Default::default();
         let mut card_cache: CardDeckCache = Default::default();
         card_cache.add_deck(db.card_decks.get("Default").expect("For development I have added a Default deck."));
@@ -353,6 +364,7 @@ impl Default for CahServer {
             matches: RwLock::new(matches),
             database: RwLock::new(db),
             card_cache: RwLock::new(card_cache),
+            connection_pool: pool,
         }
     }
 }
@@ -399,6 +411,8 @@ impl Handler<messages::incomming::RegisterAccount> for CahServer {
     type Result = Result<(), String>;
 
     fn handle(&mut self, msg: messages::incomming::RegisterAccount, _ctx: &mut Context<Self>) -> Self::Result {
+        let connection = self.connection_pool.get().map_err(|_db_err| str!("Something went wrong with database connections"))?;
+
         if let Some(db_player) = self.database.read().unwrap().players.iter().find(|&db_player| db_player.email == msg.email || db_player.player.name == msg.username) {
             return if db_player.email == msg.email {
                 Err("User already exists with email".to_owned())
@@ -409,6 +423,18 @@ impl Handler<messages::incomming::RegisterAccount> for CahServer {
 
         let salt = Uuid::new_v4();
         let password_hash = hash_password(&salt, &msg.password);
+
+        
+        let stmt = "INSERT INTO players (player_name, email, password_hash, salt)
+                    VALUES
+                     (?1, ?2, ?3, ?4)
+                    ";
+                    //TODO: Test the unwrap here, can it ever be Err?
+        connection.execute(
+            stmt, 
+            params![msg.username, msg.email, base64::encode_config(password_hash.as_slice(), base64::STANDARD_NO_PAD), salt.to_simple_ref().to_string()])
+            .map_err(|_db_err| str!("Inserting player went wrong!"))?;
+
         let new_db_player = DatabasePlayer{player: Player{name: msg.username, id: Uuid::new_v4()}, email: msg.email, password_hash: password_hash, salt: salt};
         println!("Registering new user: {:?}", &new_db_player);
         self.database.get_mut().unwrap().players.push(new_db_player);

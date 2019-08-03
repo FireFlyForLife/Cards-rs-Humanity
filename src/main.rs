@@ -378,8 +378,9 @@ fn main() -> io::Result<()> {
     let sys = System::new("CrsH-Server");
 
     // Start N db executor actors (N = number of cores avail)
-    let manager = SqliteConnectionManager::file("db/some.db");
-    let pool = Pool::new(manager).unwrap();
+    // I moved this in the CahServer
+    // let manager = SqliteConnectionManager::file("db/some.db");
+    // let pool = Pool::new(manager).unwrap();
 
     let server = cah_server::CahServer::default().start();
     let _async_cli = AsyncCLI::new(server.clone()).start();
