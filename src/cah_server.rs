@@ -744,6 +744,14 @@ impl Handler<messages::incomming::RevealCard> for CahServer {
     }
 }
 
+impl Handler<crate::StopServer> for CahServer {
+    type Result = ();
+
+    fn handle(&mut self, msg: crate::StopServer, ctx: &mut Context<Self>) {
+        System::current().stop_with_code(0);
+    }
+}
+
 impl Handler<messages::incomming::CzarChoice> for CahServer {
     type Result = ();
 

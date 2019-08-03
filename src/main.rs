@@ -1,15 +1,4 @@
 #![cfg_attr(feature = "cargo-clippy", allow(clippy::needless_pass_by_value))]
-//! Application may have multiple data objects that are shared across
-//! all handlers within same Application. Data could be added
-//! with `App::data()` method, multiple different data objects could be added.
-//!
-//! > **Note**: http server accepts an application factory rather than an
-//! application > instance. Http server constructs an application instance for
-//! each thread, > thus application data
-//! > must be constructed multiple times. If you want to share data between
-//! different > threads, a shared object should be used, e.g. `Arc`.
-//!
-//! Check [user guide](https://actix.rs/book/actix-web/sec-2-application.html) for more info.
 
 #[macro_use]
 extern crate serde_derive;
@@ -29,15 +18,23 @@ use actix_session::{Session, CookieSession};
 
 use uuid::Uuid;
 
-use futures::{Future};
+use dotenv;
+
+use futures::future::{Future, ok as fut_ok};
+use tokio::io::{stdin, Stdin};
+use tokio_codec::{FramedRead, LinesCodec};
+use r2d2_sqlite;
+use r2d2_sqlite::SqliteConnectionManager;
 
 
 pub mod cah_server;
 pub mod messages;
+pub mod db;
 
 use cah_server::CardId;
+use db::Pool;
 
-/// How often heartbeat pings are sent
+/// How often heartbeat pings are sent for the websockets
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long before lack of client response causes a timeout
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -305,6 +302,63 @@ impl MyWebSocket {
     }
 }
 
+#[derive(Message)]
+pub struct StopServer;
+
+pub struct AsyncCLI {
+    input_future_handle: Option<SpawnHandle>,
+    cah_addr: Addr<cah_server::CahServer>,
+}
+impl AsyncCLI {
+    pub fn new(cah_addr: Addr<cah_server::CahServer>) -> Self {
+        AsyncCLI {
+            input_future_handle: None,
+            cah_addr: cah_addr,
+        }
+    }
+}
+impl Actor for AsyncCLI {
+    type Context = Context<AsyncCLI>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        let stdin = tokio_stdin_stdout::stdin(0);
+        // let stdout = tokio_stdin_stdout::stdout(0); // .make_sendable();
+
+        let framed_stdin = FramedRead::new(stdin, LinesCodec::new());
+        
+        let cah_addr_clone = self.cah_addr.clone();
+        let framed_stdin_future = framed_stdin.for_each(move |line| {
+            match &line[..] {
+                "stop" => { let _ = cah_addr_clone.try_send(StopServer); },
+                _ => {},
+            }
+
+            fut_ok(())
+        }).map_err(|_err| {});
+            // .and_then(move |line| {
+            // // `and_then` above is not a Future's "and_then", it Stream's "and_then".
+                
+
+            //     fut_ok(())
+            // })
+            // .map(|_| {})
+            // .map_err(|_| {});
+        
+        let actix_framed_stdin_future = actix::fut::wrap_future(framed_stdin_future);
+        let input_future_handle = ctx.spawn( actix_framed_stdin_future );
+        self.input_future_handle = Some(input_future_handle);
+    }
+
+    fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
+        if let Some(input_future_handle) = self.input_future_handle {
+            ctx.cancel_future(input_future_handle);
+        }
+
+        Running::Stop
+    }
+}
+
+
 /// simple handle
 fn counter_page(state: web::Data<Mutex<usize>>, req: HttpRequest) -> HttpResponse {
     println!("{:?}", req);
@@ -315,18 +369,27 @@ fn counter_page(state: web::Data<Mutex<usize>>, req: HttpRequest) -> HttpRespons
 
 fn main() -> io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_server=info,actix_web=info");
+    dotenv::dotenv().ok();
+
     env_logger::init();
 
     let counter = web::Data::new(Mutex::new(0usize));
 
-    let sys = System::new("ws-example");
+    let sys = System::new("CrsH-Server");
+
+    // Start N db executor actors (N = number of cores avail)
+    let manager = SqliteConnectionManager::file("db/some.db");
+    let pool = Pool::new(manager).unwrap();
+
     let server = cah_server::CahServer::default().start();
+    let _async_cli = AsyncCLI::new(server.clone()).start();
 
     //move is necessary to give closure below ownership of counter
     HttpServer::new(move || {
         App::new()
             .register_data(counter.clone()) // <- create app with shared state
             .register_data(web::Data::new(server.clone()))
+            // .register_data(web::Data::new(pool.clone()))
             .wrap(CookieSession::signed(&COOKIE_SIGNED_KEY) // <- create cookie based session middleware
                 .secure(false))
             // enable logger
@@ -347,5 +410,9 @@ fn main() -> io::Result<()> {
     .bind("127.0.0.1:8080")?
     .start();
 
-    sys.run()
+    let run_result = sys.run();
+
+    println!("Server has gracefully shutdown!");
+
+    run_result
 }

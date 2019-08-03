@@ -1,0 +1,4 @@
+INSERT INTO players (player_name, email, password_hash, salt)
+VALUES
+ ('DbMaiko', 'test@gmail.com', '323232', '323232')
+ 
