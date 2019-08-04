@@ -18,6 +18,7 @@ use rusqlite::params;
 use std::u64;
 use crate::CookieToken;
 use crate::messages;
+use crate::db;
 
 use sha2::Sha512;
 use sha2::Digest;
@@ -30,7 +31,7 @@ use rand::seq::SliceRandom;
 
 use r2d2_sqlite;
 use r2d2_sqlite::SqliteConnectionManager;
-use crate::db::Pool;
+use crate::db::{Pool, Database};
 
 
 pub type CardId = u64;
@@ -39,8 +40,8 @@ const PlayerNilId: PlayerId = 0;
 
 type ShaImpl = Sha512;
 //TODO: Infer this from ShaImpl::OutputSize instead of hardcoding
-const PasswordHashByteSize: usize = 64;
-type PasswordHash = GenericArray<u8, <ShaImpl as Digest>::OutputSize>;
+pub const PASSWORD_HASH_BYTE_SIZE: usize = 64;
+pub type PasswordHash = GenericArray<u8, <ShaImpl as Digest>::OutputSize>;
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct Card {
@@ -74,53 +75,6 @@ pub struct Player {
     name: String,
     id: PlayerId,
 }
-
-#[derive(Default, Debug, Clone)]
-pub struct DatabasePlayer {
-    player: Player,
-    email: String,
-    password_hash: PasswordHash, 
-    salt: Uuid,
-}
-
-pub struct Database {
-    card_decks: HashMap<String, CardDeck>,
-    players: Vec<DatabasePlayer>,
-    card_id_counter: u64,
-}
-impl Database {
-    fn get_player_by_id(&self, id: &PlayerId) -> Option<Player> {
-        for db_player in &self.players {
-            if db_player.player.id == *id {
-                return Some(db_player.player.clone());
-            }
-        }
-
-        None
-    }
-}
-impl Default for Database {
-    fn default() -> Self {
-        let card_id_counter: u64 = 11;
-        let decks = hashmap!{
-            str!("Default") => CardDeck{
-                deck_name: str!("Default"), 
-                black_cards: vec![Card{content: str!("Question 1 ____"), id: 1}, Card{content: str!("Question 2 ______"), id: 2}], 
-                white_cards: vec![
-                    Card{content: str!("Awnser card 1"), id: 3}, Card{content: str!("Awnser card 2"), id: 4}, Card{content: str!("Awnser card 3"), id: 5}, 
-                    Card{content: str!("Awnser card 4"), id: 6}, Card{content: str!("Awnser card 5"), id: 7}, Card{content: str!("Awnser card 6"), id: 8}, Card{content: str!("Awnser card 7"), id: 9}]
-                }
-        };
-        let players = vec![];
-
-        Database{
-            card_decks: decks,
-            players: players,
-            card_id_counter: card_id_counter,
-        }
-    }
-}
-
 
 #[derive(PartialEq, Eq)]
 pub enum MatchInProgress {
@@ -342,11 +296,10 @@ pub struct CahServer {
     matches: RwLock<HashMap<String, Match>>,
     database: RwLock<Database>,
     card_cache: RwLock<CardDeckCache>,
-    connection_pool: Pool,
 }
 
-impl Default for CahServer {
-    fn default() -> CahServer {
+impl CahServer {
+    pub fn new(connection_pool: Pool) -> Self {
         // default room
         let mut matches = HashMap::new();
         let mut main_match = Match::default();
@@ -359,21 +312,19 @@ impl Default for CahServer {
         let manager = SqliteConnectionManager::file("db/some.db");
         let pool = Pool::new(manager).unwrap();
 
-        let db: Database = Default::default();
+        let db: Database = Database::new(connection_pool);
         let mut card_cache: CardDeckCache = Default::default();
-        card_cache.add_deck(db.card_decks.get("Default").expect("For development I have added a Default deck."));
+        //TODO: FIX the deck not being cached because of refactoring
+        // card_cache.add_deck(db.card_decks.get("Default").expect("For development I have added a Default deck."));
 
         CahServer {
             sessions: Default::default(),
             matches: RwLock::new(matches),
             database: RwLock::new(db),
             card_cache: RwLock::new(card_cache),
-            connection_pool: pool,
         }
-    }
-}
+    } 
 
-impl CahServer {
     //TODO: Optimize
     fn get_room_from_uuid(&self, user_id: &PlayerId) -> Option<String> {
         for room in self.matches.read().unwrap().iter() {
@@ -402,23 +353,7 @@ impl Actor for CahServer {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Self::Context) {
-        if let Ok(connection) = self.connection_pool.get() {
-            let create_tables_stmt = "CREATE TABLE IF NOT EXISTS players (
-                                        player_id INTEGER PRIMARY KEY UNIQUE,
-                                        player_name VARCHAR(32) NOT NULL,
-                                        email VARCHAR(254) NOT NULL UNIQUE,
-                                        password_hash CHAR(64) NOT NULL,
-                                        salt CHAR(16) NOT NULL
-                                        );
-
-                                        CREATE TABLE IF NOT EXISTS cards (
-                                        card_id INTEGER PRIMARY KEY UNIQUE,
-                                        deck VARCHAR(64) NOT NULL,
-                                        card_content VARCHAR(255) NOT NULL
-                                        );
-                                        ";
-            let _exec_res = connection.execute(create_tables_stmt, NO_PARAMS).map_err( |err| println!("There was an error initializing db: {:?}", err) );
-        }
+        
     }
 }
 
@@ -435,34 +370,30 @@ impl Handler<messages::incomming::RegisterAccount> for CahServer {
     type Result = Result<(), String>;
 
     fn handle(&mut self, msg: messages::incomming::RegisterAccount, _ctx: &mut Context<Self>) -> Self::Result {
-        let connection = self.connection_pool.get().map_err(|_db_err| str!("Something went wrong with database connections"))?;
 
-        if let Some(db_player) = self.database.read().unwrap().players.iter().find(|&db_player| db_player.email == msg.email || db_player.player.name == msg.username) {
-            return if db_player.email == msg.email {
-                Err("User already exists with email".to_owned())
-            } else { // we only check for email and username, so username should be equal here.
-                Err("User already exists with username".to_owned())
-            };
-        }
+        // if let Some(db_player) = self.database.read().unwrap().players.iter().find(|&db_player| db_player.email == msg.email || db_player.player.name == msg.username) {
+        //     return if db_player.email == msg.email {
+        //         Err("User already exists with email".to_owned())
+        //     } else { // we only check for email and username, so username should be equal here.
+        //         Err("User already exists with username".to_owned())
+        //     };
+        // }
 
         let salt = Uuid::new_v4();
         let password_hash = hash_password(&salt, &msg.password);
 
-        
-        let stmt = "INSERT INTO players (player_name, email, password_hash, salt)
-                    VALUES
-                     (?1, ?2, ?3, ?4)
-                    ";
-        connection.execute(
-            stmt, 
-            params![msg.username, msg.email, base64::encode_config(password_hash.as_slice(), base64::STANDARD_NO_PAD), salt.to_simple_ref().to_string()])
-            .map_err(|_db_err| str!("Inserting player went wrong!"))?;
+        let db_cmd = db::RegisterPlayer{username: msg.username, email: msg.email, password_hash: password_hash, salt: salt};
+        let database = self.database.get_mut().unwrap();
+        let db_future = database.execute(db_cmd);
 
+        //TODO: IDGAF fuck this give me the value
+        db_future.wait().map_err(|db_err| format!("Db error registering new account: {:?}", db_err))
+        
         //let new_db_player = DatabasePlayer{player: Player{name: msg.username, id: Uuid::new_v4()}, email: msg.email, password_hash: password_hash, salt: salt};
 
         //self.database.get_mut().unwrap().players.push(new_db_player);
 
-        Ok(())
+        // Ok(())
     }
 }
 
@@ -471,54 +402,31 @@ impl Handler<messages::incomming::Login> for CahServer {
 
     //TODO: How to handle two people fighting over a account?
     fn handle(&mut self, msg: messages::incomming::Login, _ctx: &mut Context<Self>) -> Self::Result {
-        let connection = self.connection_pool.get().map_err(|err| format!("Error connecting to db: {:?}", err))?;
-        
-        let query_salt_stmt = "
-            SELECT 
-             player_id, password_hash, salt
-            FROM 
-             players
-            WHERE
-             player_name = ?1 OR player_email = ?1
-            LIMIT 1
-            ";
-        
-        let mut preped_salt_query = connection.prepare(query_salt_stmt).map_err(|err| format!("Error preparing db statement: {:?}", err))?;
-        let player_salt_iter = preped_salt_query.query_map::<(i64, PasswordHash, Uuid), _, _>(
-            params![msg.username_or_email], 
-            |row| { 
-                let pw_hash_string: String = row.get(1)?;
-                assert!(pw_hash_string.len() == PasswordHashByteSize);
-                
-                Ok( (row.get(0)?, PasswordHash::clone_from_slice(pw_hash_string.into_bytes().as_slice()), row.get(2)?) ) 
-            }).map_err(|err| format!("Returning playersalt failed: {:?}", err))?;
-        
-        let players_and_salt: Vec<_> = player_salt_iter.collect();
-        if players_and_salt.len() > 0 {
-            debug_assert!(players_and_salt.len() == 1, 
-                "There should never be duplicates, wait maybe if the username is not unique. Well it shouldn't anyway");
+        let database = self.database.get_mut().unwrap();
+        let db_cmd = db::LoginPlayer{username_or_email: msg.username_or_email};
+        let db_future = database.execute(db_cmd);
+        //TODO: Not wait or something idc
+        match db_future.wait() {
+            Ok((player_id, db_password_hash, salt)) => {
+                let user_password_hash = hash_password(&salt, &msg.password);
+                if user_password_hash == db_password_hash {
+                    let sessions = self.sessions.get_mut().unwrap();
+                    //TODO: Optimize this, there can only be one.
+                    sessions.retain(|&_key, &mut value| value != player_id);
+                    let new_cookie_token = CookieToken::new_v4();
+                    sessions.insert(new_cookie_token, player_id);
 
-            match &players_and_salt[0] {
-                Ok((player_id, db_password_hash, salt)) => {
-                    let user_password_hash = hash_password(&salt, &msg.password);
-                    if &user_password_hash == db_password_hash {
-                        let sessions = self.sessions.get_mut().unwrap();
-                        //TODO: Optimize this, there can only be one.
-                        sessions.retain(|&_key, &mut value| &value != player_id);
-                        let new_cookie_token = CookieToken::new_v4();
-                        sessions.insert(new_cookie_token, *player_id);
-
-                        Ok(new_cookie_token)
-                    } else {
-                        Err(str!("Password incorrect!"))
-                    }
-                },
-                Err(db_err) => Err(format!("Error retrieving players from db query, db_err: {:?}", db_err)),
-            }
-
-        } else {
-            Err(str!("Cannot find player by name of email"))
+                    Ok(new_cookie_token)
+                } else {
+                    Err(str!("Password incorrect!"))
+                }
+            },
+            Err(db_err) => Err(format!("Error retrieving players from db query, db_err: {:?}", db_err)),
         }
+
+        // } else {
+        //     Err(str!("Cannot find player by name of email"))
+        // }
 
         // let db = self.database.get_mut().unwrap();
         // if let Some(db_player) = db.players.iter().find(|&db_player| db_player.player.name == msg.username_or_email || db_player.email == msg.username_or_email) {
@@ -565,11 +473,15 @@ impl Handler<messages::incomming::SocketConnectMatch> for CahServer {
 
         println!("{} is connecting", &user_id);
 
-        let db_player = self.database.get_mut().unwrap().players.iter().find(|&db_player| &db_player.player.id == &user_id);
-        debug_assert!(db_player.is_some(), 
+        let databse = self.database.get_mut().unwrap();
+        let query_player = db::GetPlayerById{player_id: user_id.clone()};
+        let query_player_fut = databse.execute(query_player);
+
+        let player_result = query_player_fut.wait();
+        debug_assert!(player_result.is_ok(), 
             format!("ERROR: Cannot find player with id:{} in the database, pleaes make an account first! Thanks you!", user_id));
 
-        let player = db_player.unwrap().player.clone();
+        let player = player_result.unwrap();
 
         if let Some(room_name) = self.get_room_from_uuid(&user_id) {
             //TODO: MyWebSocket stores the room it should be found to, and should be checked here too.
@@ -611,8 +523,8 @@ impl Handler<messages::incomming::JoinMatch> for CahServer {
             let matches = self.matches.get_mut().unwrap();
             if let Some(room) = matches.get_mut(&msg.match_name) {
                 let db = self.database.read().unwrap();
-                let player_option = db.get_player_by_id(&user_id);
-                debug_assert!(player_option.is_some(), 
+                let player_option = db.execute(db::GetPlayerById{player_id: user_id}).wait();
+                debug_assert!(player_option.is_ok(), 
                     "We managed to find ourselves with the call `CahServer::get_user_id()` but we cannot find ourselves in `self.get_player_by_id()`");
                 let player = player_option.unwrap();
                 let player_in_match = PlayerInMatch{player: player.clone(), cards: Vec::new(), points: 0, submitted_card: None, socket_actor: None };
