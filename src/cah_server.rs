@@ -34,7 +34,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use crate::db::{Pool, Database};
 
 
-pub type CardId = u64;
+pub type CardId = i64;
 pub type PlayerId = i64;
 const PlayerNilId: PlayerId = 0;
 
@@ -65,15 +65,15 @@ impl Card {
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct CardDeck {
-    deck_name: String,
-    black_cards: Vec<Card>,
-    white_cards: Vec<Card>,
+    pub deck_name: String,
+    pub black_cards: Vec<Card>,
+    pub white_cards: Vec<Card>,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Player {
-    name: String,
-    id: PlayerId,
+    pub name: String,
+    pub id: PlayerId,
 }
 
 #[derive(PartialEq, Eq)]
@@ -309,13 +309,11 @@ impl CahServer {
         matches.insert("Main".to_owned(), main_match);
         matches.insert("Second Room".to_owned(), second_room_match);
 
-        let manager = SqliteConnectionManager::file("db/some.db");
-        let pool = Pool::new(manager).unwrap();
-
-        let db: Database = Database::new(connection_pool);
+        let mut db: Database = Database::new(connection_pool);
         let mut card_cache: CardDeckCache = Default::default();
-        //TODO: FIX the deck not being cached because of refactoring
-        // card_cache.add_deck(db.card_decks.get("Default").expect("For development I have added a Default deck."));
+        
+        let default_card_deck = db.execute(db::GetCardDeck{deck_name: str!("Default")}).wait().unwrap();
+        card_cache.add_deck(&default_card_deck);
 
         CahServer {
             sessions: Default::default(),
@@ -522,7 +520,7 @@ impl Handler<messages::incomming::JoinMatch> for CahServer {
             
             let matches = self.matches.get_mut().unwrap();
             if let Some(room) = matches.get_mut(&msg.match_name) {
-                let db = self.database.read().unwrap();
+                let db = self.database.get_mut().unwrap();
                 let player_option = db.execute(db::GetPlayerById{player_id: user_id}).wait();
                 debug_assert!(player_option.is_ok(), 
                     "We managed to find ourselves with the call `CahServer::get_user_id()` but we cannot find ourselves in `self.get_player_by_id()`");
@@ -617,8 +615,8 @@ impl Handler<messages::incomming::StartMatch> for CahServer {
                         if room.players[0].player.id == player_in_match.player.id && room.match_progress == MatchInProgress::NotStarted {
                             room.match_progress = MatchInProgress::InProgress;
                             
-                            let db = self.database.read().unwrap();
-                            let default_card_deck = db.card_decks.get("Default").unwrap();
+                            let db = self.database.get_mut().unwrap();
+                            let default_card_deck = db.execute(db::GetCardDeck{deck_name: str!("Default")}).wait().unwrap();//db.card_decks.get("Default").unwrap();
                             let msg_json = json!({
                                 "type": "matchStarted",
                             });

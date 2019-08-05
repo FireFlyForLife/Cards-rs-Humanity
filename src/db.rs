@@ -14,7 +14,7 @@ use std::error;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::cah_server::{Player, PlayerId, PasswordHash, PASSWORD_HASH_BYTE_SIZE};
+use crate::cah_server::{Player, PlayerId, CardId, CardDeck, Card, PasswordHash, PASSWORD_HASH_BYTE_SIZE};
 
 
 pub type Pool = r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>;
@@ -28,11 +28,11 @@ pub trait DbQuery: Send{
 
 #[derive(Debug, Clone)]
 pub struct DbError {
-
+    pub additional_info: String,
 }
 impl fmt::Display for DbError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Something went wrong with a db query")
+        write!(f, "DbError, info: {}", self.additional_info)
     }
 }
 impl error::Error for DbError {
@@ -42,23 +42,23 @@ impl error::Error for DbError {
     }
 }
 impl From<r2d2::Error> for DbError {
-    fn from(_r2d2_error: r2d2::Error) -> Self {
-        DbError{}
+    fn from(r2d2_error: r2d2::Error) -> Self {
+        DbError{additional_info: format!("r2d2_error: {}", r2d2_error)}
     }
 }
 impl From<actix_threadpool::BlockingError<DbError>> for DbError {
-    fn from(_blocking_db_error: actix_threadpool::BlockingError<DbError>) -> Self {
-        DbError{}
+    fn from(blocking_db_error: actix_threadpool::BlockingError<DbError>) -> Self {
+        DbError{additional_info: format!("actix_threadpool blocking_error: {}", blocking_db_error)}
     }
 }
 impl From<String> for DbError {
     fn from(string: String) -> Self {
-        DbError{}
+        DbError{additional_info: string}
     }
 }
 impl From<rusqlite::Error> for DbError {
     fn from(rusqlite_err: rusqlite::Error) -> DbError {
-        DbError{}
+        DbError{additional_info: format!("rusqlite_err: {}", rusqlite_err)}
     }
 }
 
@@ -102,7 +102,7 @@ impl Database {
     pub fn execute<Query: DbQuery + 'static>(&mut self, mut query: Query) -> impl Future<Item=<Query as DbQuery>::Item, Error=DbError>{
         let pool = self.connection_pool.clone();
         
-        web::block(|| {
+        web::block(move || {
             let connection = pool.get()?;
             query.execute(connection)
         })
@@ -126,7 +126,7 @@ impl DbQuery for RegisterPlayer {
                     ";
         connection.execute(
             stmt, 
-            params![self.username, self.email, base64::encode_config(self.password_hash.as_slice(), base64::STANDARD_NO_PAD), self.salt.to_simple_ref().to_string()])
+            params![self.username, self.email, self.password_hash.as_slice(), self.salt])
             .map_err(|_db_err| str!("Inserting player went wrong!"))?;
 
         Ok(())
@@ -147,7 +147,7 @@ impl DbQuery for LoginPlayer {
             FROM 
              players
             WHERE
-             player_name = ?1 OR player_email = ?1
+             player_name = ?1 OR email = ?1
             LIMIT 1
             ";
         
@@ -155,10 +155,10 @@ impl DbQuery for LoginPlayer {
         let player_salt_iter = preped_salt_query.query_map::<(i64, PasswordHash, Uuid), _, _>(
             params![self.username_or_email], 
             |row| { 
-                let pw_hash_string: String = row.get(1)?;
-                assert!(pw_hash_string.len() == PASSWORD_HASH_BYTE_SIZE);
+                let pw_hash_blob: Vec<u8> = row.get(1)?;
+                assert!(pw_hash_blob.len() == PASSWORD_HASH_BYTE_SIZE);
                 
-                Ok( (row.get(0)?, PasswordHash::clone_from_slice(pw_hash_string.into_bytes().as_slice()), row.get(2)?) ) 
+                Ok( (row.get(0)?, PasswordHash::clone_from_slice(pw_hash_blob.as_slice()), row.get(2)?) ) 
             }).map_err(|err| format!("Returning playersalt failed: {:?}", err))?;
         
         let players_and_salt: Vec<_> = player_salt_iter.collect();
@@ -168,16 +168,16 @@ impl DbQuery for LoginPlayer {
 
             match &players_and_salt[0] {
                 Ok((player_id, db_password_hash, salt)) => Ok((*player_id, *db_password_hash, *salt)),
-                Err(db_err) => Err(DbError{}),
+                Err(db_err_get) => Err(DbError{additional_info: format!("HOW COULD THIS HAPPEN??? Could not find a player, even though we checked??? err: {}", db_err_get)}),
             }
         } else {
-            Err(DbError{})
+            Err(DbError{additional_info: str!("Could not find player with that name")})
         }
     }
 }
 
 pub struct GetPlayerById {
-    player_id: PlayerId,
+    pub player_id: PlayerId,
 }
 impl DbQuery for GetPlayerById {
     type Item = Player;
@@ -194,15 +194,44 @@ impl DbQuery for GetPlayerById {
              1
             ";
         
-        let get_player_query = connection.prepare(get_player_stmt)?;
+        let mut get_player_query = connection.prepare(get_player_stmt)?;
         let player_iterator = get_player_query.query_map::<String, _, _>(params![self.player_id], |row| Ok(row.get(0)?) )?;
         let players: Vec<_> = player_iterator.collect();
         
-        if players.len() == 0 { return Err(DbError{}); }
+        if players.len() == 0 { return Err(DbError{additional_info: format!("Could not get player with id: {}", self.player_id)}); }
 
         debug_assert!(players.len() == 1, "There are more players, there can only be 1 with a specified id");
 
-        Ok(Player{id: self.player_id, name: players[0].unwrap()})
+        Ok(Player{id: self.player_id, name: players[0].as_ref().unwrap().clone()})
+    }
+}
+pub struct GetCardDeck {
+    pub deck_name: String
+}
+impl DbQuery for GetCardDeck {
+    type Item = CardDeck;
+
+    fn execute(&mut self, connection: Connection) -> Result<Self::Item, DbError> {
+        let get_cards_stmt = "
+        SELECT card_id, card_content, is_black FROM cards WHERE deck=?1 
+        ";
+        
+        let mut get_cards_query = connection.prepare(get_cards_stmt).unwrap();
+        let cards_iterator = get_cards_query.query_map::<(CardId, String, bool), _, _>(params![self.deck_name], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)) )?;
+        let mut card_deck = CardDeck::default();
+        card_deck.deck_name = self.deck_name.clone();
+        for card_result in cards_iterator {
+            let (card_id, card_content, is_black): (CardId, String, bool)  = card_result?;
+            
+            let card = Card{id: card_id, content: card_content};
+            if is_black {
+                card_deck.black_cards.push(card);
+            } else {
+                card_deck.white_cards.push(card);
+            }
+        }
+
+        Ok(card_deck)
     }
 }
 

@@ -1,0 +1,13 @@
+INSERT INTO cards (deck, card_content, is_black)
+VALUES
+ ('Default', 'Db card #1', 0),
+ ('Default', 'Db card #2', 0),
+ ('Default', 'Db card #3', 0),
+ ('Default', 'Db card #4', 0),
+ ('Default', 'Db card #5', 0),
+ ('Default', 'Db card #6', 0),
+ ('Default', 'Db card #7', 0),
+ ('Default', 'Db white card ___ #1', 1),
+ ('Default', 'Db white card ___ #2', 1),
+ ('Default', 'Db white card ___ #3', 1),
+ ('Default', 'Db white card ___ #4', 1);

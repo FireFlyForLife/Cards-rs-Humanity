@@ -138,7 +138,7 @@ function _parseJsonToGameState(data) {
 	if(!validateJsonProperty(jsonData, 'other_players', 'array', 	"GameState message received,")) { return null; }
 	if(!validateJsonProperty(jsonData, 'our_player', 	'object', 	"GameState message received,")) { return null; }
 	if(!validateJsonProperty(jsonData, 'hand_of_cards', 'array', 	"GameState message received,")) { return null; }
-	if(!validateJsonProperty(jsonData, 'czar', 			'string', 	"GameState message received,")) { return null; }
+	if(!validateJsonProperty(jsonData, 'czar', 			'number', 	"GameState message received,")) { return null; }
 	if(!validateJsonProperty(jsonData, 'started', 		'boolean', 	"GameState message received,")) { return null; }
 
 	var message = new incommingMessages.GameState(jsonData["other_players"], jsonData["our_player"], jsonData["hand_of_cards"], jsonData["czar"], jsonData["started"]);
@@ -321,7 +321,7 @@ class ServerSocketConnection {
 				this.onNewRound.dispatch();
 			break;
 			case "newCzar": 
-				if(!validateJsonProperty(jsonData, 'czar', 'string', "NewCzar message received,")) { return; }
+				if(!validateJsonProperty(jsonData, 'czar', 'number', "NewCzar message received,")) { return; }
 
 				var message = new incommingMessages.NewCzar(jsonData["czar"]);
 				this.onNewCzar.dispatch(message);
