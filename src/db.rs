@@ -220,8 +220,11 @@ impl DbQuery for GetCardDeck {
         let cards_iterator = get_cards_query.query_map::<(CardId, String, bool), _, _>(params![self.deck_name], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)) )?;
         let mut card_deck = CardDeck::default();
         card_deck.deck_name = self.deck_name.clone();
+        let mut atleast_one_card = false;
         for card_result in cards_iterator {
             let (card_id, card_content, is_black): (CardId, String, bool)  = card_result?;
+
+            atleast_one_card = true;
             
             let card = Card{id: card_id, content: card_content};
             if is_black {
@@ -231,28 +234,58 @@ impl DbQuery for GetCardDeck {
             }
         }
 
-        Ok(card_deck)
+        if atleast_one_card {
+            Ok(card_deck)
+        }else { 
+            Err(DbError{additional_info: format!("Could not find any cards for a deck named: {}", self.deck_name)})
+        }
     }
 }
 
-// impl Default for Database {
-//     fn default() -> Self {
-//         let card_id_counter: u64 = 11;
-//         let decks = hashmap!{
-//             str!("Default") => CardDeck{
-//                 deck_name: str!("Default"), 
-//                 black_cards: vec![Card{content: str!("Question 1 ____"), id: 1}, Card{content: str!("Question 2 ______"), id: 2}], 
-//                 white_cards: vec![
-//                     Card{content: str!("Awnser card 1"), id: 3}, Card{content: str!("Awnser card 2"), id: 4}, Card{content: str!("Awnser card 3"), id: 5}, 
-//                     Card{content: str!("Awnser card 4"), id: 6}, Card{content: str!("Awnser card 5"), id: 7}, Card{content: str!("Awnser card 6"), id: 8}, Card{content: str!("Awnser card 7"), id: 9}]
-//                 }
-//         };
-//         let players = vec![];
+pub struct AddCard {
+    pub deck_name: String,
+    pub card_content: String,
+    pub is_black: bool,
+}
+impl DbQuery for AddCard {
+    type Item = CardId;
 
-//         Database{
-//             card_decks: decks,
-//             players: players,
-//             card_id_counter: card_id_counter,
-//         }
-//     }
-// }
+    fn execute(&mut self, connection: Connection) -> Result<CardId, DbError> {
+        let insert_card_stmt = "INSERT INTO cards (deck, card_content, is_black) VALUES (?1, ?2, ?3)";
+        let amount_inserted = connection.execute(
+            insert_card_stmt, 
+            params![self.deck_name, self.card_content, self.is_black])
+            .map_err(|_db_err| DbError{additional_info: str!("Inserting player went wrong!")} )?;
+
+        if amount_inserted != 1 {
+            return Err(DbError{additional_info: format!("Cannot insert new {} card ({}) in deck: {}", if self.is_black { "black" } else { "white" }, self.card_content, self.deck_name)});
+        }
+
+        let new_card_id = connection.last_insert_rowid();
+
+        Ok(new_card_id)
+    }
+}
+
+pub struct DelCard {
+    pub deck_name: String,
+    pub card_id: CardId,
+}
+impl DbQuery for DelCard {
+    type Item = ();
+
+    fn execute(&mut self, connection: Connection) -> Result<(), DbError> {
+        let del_card_stmt = "DELETE FROM cards WHERE card_id=?1 AND deck=?2";
+        let amount_deleted = connection.execute(
+            del_card_stmt, 
+            params![self.card_id, self.deck_name])
+            .map_err(|db_err| DbError{additional_info: format!("Deleting card went wrong! {}", db_err)})?;
+
+        if amount_deleted != 0 {
+            return Err(DbError{additional_info: format!("Could not delete card with id: {}, from deck '{}'", self.card_id, self.deck_name)});
+        }
+
+        Ok(())
+    }
+}
+

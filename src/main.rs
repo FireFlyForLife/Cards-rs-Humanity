@@ -26,6 +26,7 @@ use tokio_codec::{FramedRead, LinesCodec};
 use r2d2_sqlite;
 use r2d2_sqlite::SqliteConnectionManager;
 
+use str_macro::str;
 
 pub mod cah_server;
 pub mod messages;
@@ -367,6 +368,85 @@ fn counter_page(state: web::Data<Mutex<usize>>, req: HttpRequest) -> HttpRespons
     HttpResponse::Ok().body(format!("Num of requests: {}", state.lock().unwrap()))
 }
 
+fn get_card_deck(_r: HttpRequest, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>, path: web::Path<(String,)>) -> impl Future<Item=HttpResponse, Error=Error> {
+    let token_result = session.get("ct");
+    let deck_name = path.into_inner().0;
+    
+    match token_result {
+        Ok(Some(cookie_token)) => server_address.send(messages::incomming::GetCards{token: cookie_token, deck_name: deck_name})
+            .map_err(Error::from)
+            .map(|deck_result| {
+                match deck_result {
+                                                //TODO: And Fix this this unwrap too
+                    Ok(deck) => HttpResponse::Ok().body(serde_json::to_string(&deck).unwrap()),
+                    Err(err_str) => HttpResponse::BadRequest().body(err_str)
+                }
+            }),
+        _ => panic!("FFS COMPILER") //<<<--- TODO: FIX THIS HERE
+    }
+}
+
+fn post_add_card(_r: HttpRequest, session: Session, body: web::Payload, server_address: web::Data<Addr<cah_server::CahServer>>, path: web::Path<(String, String)>) -> impl Future<Item=HttpResponse, Error=Error> {
+    let cookie_token_result = session.get("ct").map_err(|err| format!("error getting cookie token: {}", err));
+    
+    web::block::<_, (CookieToken, String, bool), String>(move || {
+        println!("RECEIVED ADD CARD THING");
+        //TODO: Give a meaningful error message
+        let cookie_token = cookie_token_result?.ok_or(str!("No cookie token available"))?;
+        println!("COOKIE SESSION VALId");
+        
+        let is_black_string = &path.0;
+        let is_black = 
+            if is_black_string == "b" { true }
+            else if is_black_string == "w" { false }
+            else { return Err(format!("card type indentifier in the URL should be 'b' or 'w', but instead was: {}", is_black_string)); };
+
+        println!("PARSED ISBLACK");
+
+        let card_deck: String = path.1.clone();
+
+        Ok((cookie_token, card_deck, is_black))
+    })
+    .map_err(|blocking_err| format!("Error while adding card: {}", blocking_err))
+    .and_then(|(cookie_token, card_deck, is_black)| {
+        body.concat2()
+            .map_err(move |err| {println!("Error receiidng paylpoad: {}", err); format!("Error receiving payload string: {}", err) })
+            .and_then(move |bytes| {
+                web::block::<_, (CookieToken, String, String, bool), String>(move ||{
+                    let card_content = String::from_utf8(bytes.to_vec()).map_err(|conversion_err| format!("Payload is not a valid UTF8 String! {}", conversion_err))?;
+                    Ok((cookie_token, card_deck, card_content, is_black))
+                })
+                .map_err(|blocking_err| format!("Error while adding card: {}", blocking_err))
+            })
+    })
+    .and_then(move |(cookie_token, card_deck, card_content, is_black)| server_address.send(messages::incomming::AddCard{token: cookie_token, deck_name: card_deck.clone(), card_content: card_content, is_black: is_black})
+        .map_err(|mailbox_err| format!("Error adding card in mailbox: {}", mailbox_err))
+        .map( |card_id_result| {
+            match card_id_result {
+                Ok(card_id) => HttpResponse::Ok().body(format!("{}", card_id)),
+                Err(error_message) =>  HttpResponse::build(StatusCode::BAD_REQUEST).body(error_message)
+            }
+        }))
+        //TODO: Return the actual error
+    .map_err( |proper_error| { println!("error while trying to add card: {}", proper_error); Error::from(()) } ) 
+}
+
+fn post_del_card(_r: HttpRequest, session: Session, server_address: web::Data<Addr<cah_server::CahServer>>, path: web::Path<(String, CardId)>) -> impl Future<Item=HttpResponse, Error=Error> {
+    let cookie_token = match session.get("ct") {
+        Ok(Some(cookie_token)) => cookie_token,
+        _ => {Default::default()}//return HttpResponse::BadRequest().body("No cookie token found, try logging in first.")
+    };
+
+    let deck_name = path.0.clone();
+    let card_id = path.1;
+
+    let msg = messages::incomming::DelCard{token: cookie_token, deck_name: deck_name, card_id: card_id};
+    server_address.send(msg)
+        //TODO: Actually return a proper error here
+        .map_err(|postbox_err| {println!("postbox err: {}", postbox_err); Error::from(()) })
+        .map(|_| HttpResponse::Ok().finish())
+}
+
 fn main() -> io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_server=info,actix_web=info");
     dotenv::dotenv().ok();
@@ -404,7 +484,11 @@ fn main() -> io::Result<()> {
                 .service(web::resource("/list_matches").route(web::get().to_async(get_list_rooms)))
                 .service(web::resource("/login").route(web::post().to_async(post_page_login)))
                 .service(web::resource("/register").route(web::post().to_async(post_page_register)))
-                .service(web::resource("/join/{match}").route(web::get().to(get_join_match))) )
+                .service(web::resource("/join/{match}").route(web::get().to(get_join_match))) 
+                .service(web::resource("/cards/{card_deck}").route(web::get().to_async(get_card_deck)))
+                .service(web::resource("/add/{type}/{card_deck}").route(web::post().to_async(post_add_card)))
+                .service(web::resource("/del/{card_deck}/{card_id}").route(web::post().to_async(post_del_card)))
+                )
             // the default website should display the index page located in the website folder and serve all css/js files relative to it.
             .service(fs::Files::new("/", "website").index_file("index.html"))
     })

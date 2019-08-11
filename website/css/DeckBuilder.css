@@ -1,0 +1,11 @@
+#cardDiv {
+    padding: 4px;
+}
+
+.blackCard, .whiteCard {
+    margin: 2px;
+}
+
+#deckName {
+    font-weight: bold;
+}

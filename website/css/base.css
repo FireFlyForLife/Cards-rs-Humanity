@@ -4,6 +4,10 @@
 	max-height: 400px;
 	max-width:  400px;
 	color: white;
+	border: solid;
+	border-color: darkgray;
+	border-width: 2px;
+	display: inline-block;
 }
 
 #handOfCards {

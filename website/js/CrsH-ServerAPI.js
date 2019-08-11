@@ -95,6 +95,14 @@ var incommingMessages = {
 	// @arg czar the id of the player who is now the czar
 	NewCzar: function(czar) {
 		this.czar = czar;
+	},
+	// @arg deckName the name of the deck
+	// @arg blackCards an array of question cards
+	// @arg whiteCards an array of response cards
+	CardDeck: function(deckName, blackCards, whiteCards){
+		this.deckName = deckName;
+		this.blackCards = blackCards;
+		this.whiteCards = whiteCards;
 	}
 };
 
@@ -103,8 +111,8 @@ var incommingMessages = {
 //
 // @arg json
 // @arg key the name of the property which should exist.
-// @arg type a string of the type that key should have. supports all `typeof` return values and array
-// @arg additionalMessage OPTIONAL a message which will be prepended to the end of the error message.
+// @arg type a string of the type that key should have. supports all `typeof` return values and 'array'
+// @arg additionalMessage OPTIONAL a message which will be prepended to the end of the error message, often used to give context to the error log
 //
 // @returns bool if the property exists and is the correct type
 function validateJsonProperty(json, key, type, additionalMessage) {
@@ -145,10 +153,29 @@ function _parseJsonToGameState(data) {
 	return message;
 }
 
+// \returns incommingMessages.CardDeck if valid, or null if the json was not a valid CardDeck.
+function _parseJsonToCardDeck(data) {
+	try{
+		var jsonData = JSON.parse(data);
+	}catch{
+		console.error("GetCardDeck message is not valid json!");
+		return null;
+	}
+	if(jsonData == null) {
+		console.error("GetCardDeck message is a null value! should be a object");
+		return null;
+	}
+
+	if(!validateJsonProperty(jsonData, 'deck_name', 'string', 'GetCardDeck message received,')) { return null; }
+	if(!validateJsonProperty(jsonData, 'black_cards', 'array', 'GetCardDeck message received,')) { return null; }
+	if(!validateJsonProperty(jsonData, 'white_cards', 'array', 'GetCardDeck message received,')) { return null; }
+
+	var message = new incommingMessages.CardDeck(jsonData['deck_name'], jsonData['black_cards'], jsonData['white_cards']);
+	return message;
+}
+
 // Send a GET request to the server.
 // This function is async, it will return a JQuerry Ajax object. When that request is completed, the data should contain a JSON array of strings
-// 
-// @arg afterParsed OPTIONAL a function which is called after the json data has been succesfully parsed.
 //
 // @returns ajax request returning a String[] of all matches
 function sendListMatches() {
@@ -186,6 +213,69 @@ function sendJoinMatch(joinMatch, afterParsed) {
 			connection.onGameState.dispatch(newGameState);
 		}
 	});
+
+	return request;
+}
+
+// send a GET request to get all cards in a given deck.
+// You are required to be logged in before this the server will accept the request.
+//
+// @arg deckName the name of the deck to query
+// @arg afterParsed OPTIONAL 	a `function(cardDeck)`, when defined will be called when the ajaxRequest has finished and the message received has been decoded. 
+// 								The cardDeck argument is of type: `incommingMessages.CardDeck`.
+//
+// @returns jquerry ajax request object returning a json object convertable to `incommingMessages.CardDeck` on success, but an error string on failure
+function sendGetCardDeck(deckName, afterParsed) {
+	var request = $.ajax({
+		url: '/api/cards/'+deckName,
+		type: 'get',
+	});
+
+	if(afterParsed != undefined) {
+		var afterParsedCopy = afterParsed;
+		request.done(function( data, textStatus, jQxhr ) {
+			var newGameState = _parseJsonToCardDeck(data);
+			if(newGameState != null) {
+				afterParsedCopy(newGameState);
+			}
+		});
+	}
+
+	return request;
+}
+
+// send a POST request to add a card to a given deck.
+// You are required to be logged in before this the server will accept the request.
+// 
+// @arg deckName the name of the deck to add the card to
+// @arg cardContent the text contents of the card
+// @arg isWhiteCard set to false if this is a white 'response' card. set to false if this is a black `question` card.
+//
+// @returns jquery ajax request object returning the cardId on success, but an error string on failure.
+function sendAddCard(deckName, cardContent, isWhiteCard) {
+	var urlPrefix = isWhiteCard ? '/api/add/w/' : '/api/add/b/';
+
+	var request = $.ajax({
+		url: urlPrefix+deckName,
+		type: 'post',
+		data: cardContent,
+	});
+
+	return request;
+}
+
+// send a POST request to remove a card from a given deck
+// You are required to be logged in before this the server will accept the request.
+//
+// @arg deckName
+// @arg cardId
+// 
+// @returns jquery ajax request object returning nothing on success, but an error string on failure.
+function sendDeleteCard(deckName, cardId) {
+	var request = $.ajax({
+		url: '/api/del/' + deckName + '/' + cardId,
+		type: 'post',
+	})
 
 	return request;
 }

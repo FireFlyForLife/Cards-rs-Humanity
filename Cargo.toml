@@ -31,6 +31,7 @@ generic-array = { version = "0.12.3", features = ["serde"] }
 maplit = "1.0.1"
 str-macro = "0.1.2"
 base64 = "0.10.1"
+failure = "0.1.5"
 
 num = "0.2.0"
 

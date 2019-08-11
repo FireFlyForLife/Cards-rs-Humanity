@@ -1,0 +1,34 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+
+  <title>Cards rs Humanity - Deck builder</title>
+  <meta name="description" content="A cards against humanity application written in rust">
+  <meta name="author" content="Maiko Steeman">
+
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/DeckBuilder.css">
+  <script type="text/javascript" src="js/thirdparty/jquery-3.4.0.js"></script>
+  <script type="text/javascript" src="js/thirdparty/jquery.form.js"></script>
+  <script type="text/javascript" src="js/thirdparty/signals.js"></script>
+  <script type="text/javascript" src="js/CrsH-ServerAPI.js"> </script>
+  <script type="text/javascript" src="js/DeckBuilder.js"> </script>
+</head>
+
+<body>
+  Deck builder page!<br><br>
+  Links to other pages: <a href="/">Home</a> <a href="/deck_builder.html">Deck builder</a>
+  <br><br>
+  <div class="divBorder">
+    <input type="text" id="deckField" value="Default"><br>
+    <button onclick="selectDeck()">Select deck with the above name</button><br><br>
+
+    <span id="deckName">Deck name: </span>
+    <div id="cardDiv" class="divBorder">
+    </div>
+    <button onclick="addWhiteCard()">Add white card</button><button onclick="addBlackCard()">Add black card</button><button onclick="removeCard()">Remove card</button>
+  </div>
+</body>
+</html>

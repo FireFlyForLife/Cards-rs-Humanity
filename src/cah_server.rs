@@ -311,7 +311,7 @@ impl CahServer {
 
         let mut db: Database = Database::new(connection_pool);
         let mut card_cache: CardDeckCache = Default::default();
-        
+
         let default_card_deck = db.execute(db::GetCardDeck{deck_name: str!("Default")}).wait().unwrap();
         card_cache.add_deck(&default_card_deck);
 
@@ -707,6 +707,51 @@ impl Handler<messages::incomming::SubmitCard> for CahServer {
                     println!("NO ROOM FOUND FOR PLAYER: {} ! While trying to submit the card_id: {}", &user_id, msg.card_id);
                 }
             }
+        }
+    }
+}
+
+impl Handler<messages::incomming::GetCards> for CahServer {
+    type Result = Result<CardDeck, String>;
+
+    fn handle(&mut self, msg: messages::incomming::GetCards, _: &mut Context<Self>) -> Self::Result {
+        if let Some(_user_id) = self.sessions.read().unwrap().get(&msg.token) {
+            let database = self.database.get_mut().unwrap();
+            database.execute(db::GetCardDeck{deck_name: msg.deck_name}).wait().map_err(|db_err| format!("{}", db_err))
+        } else {
+            Err(str!("Cannot find logged in player with that session token, is it invalid?"))
+        }
+    }
+}
+
+impl Handler<messages::incomming::AddCard> for CahServer {
+    type Result = Result<CardId, String>;
+
+    fn handle(&mut self, msg: messages::incomming::AddCard, _: &mut Context<Self>) -> Self::Result {
+        if let Some(_user_id) = self.sessions.read().unwrap().get(&msg.token) {
+            let database = self.database.get_mut().unwrap();
+
+            database.execute(db::AddCard{deck_name: msg.deck_name, card_content: msg.card_content, is_black: msg.is_black}).wait()
+                .map_err(|db_err| format!("Db error: {}", db_err))
+        } else {
+            Err(str!("Cannot find logged in player with that session token, is it invalid?"))
+        }
+    }
+}
+
+
+impl Handler<messages::incomming::DelCard> for CahServer {
+    type Result = Result<(), String>;
+
+    fn handle(&mut self, msg: messages::incomming::DelCard, _: &mut Context<Self>) -> Self::Result {
+        if let Some(_user_id) = self.sessions.read().unwrap().get(&msg.token) {
+            let database = self.database.get_mut().unwrap();
+
+            let _void = database.execute(db::DelCard{deck_name: msg.deck_name, card_id: msg.card_id}).wait().map_err(|db_err| format!("Db Err: {}", db_err))?;
+
+            Ok(())
+        } else {
+            Err(str!("Cannot find logged in player with that session token, is it invalid?"))
         }
     }
 }

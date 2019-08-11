@@ -1,4 +1,4 @@
-use crate::cah_server::{Card, CardId, PlayerId, Player, GameState};
+use crate::cah_server::{Card, CardId, CardDeck, PlayerId, Player, GameState};
 use crate::CookieToken;
 use actix::prelude::*;
 use std::string::String;
@@ -93,6 +93,33 @@ pub mod incomming {
         pub token: CookieToken,
         pub match_name: String,
         pub card_id: CardId,
+    }
+
+    pub struct GetCards {
+        pub token: CookieToken,
+        pub deck_name: String,
+    }
+    impl actix::Message for GetCards {
+        type Result = Result<CardDeck, String>;
+    }
+
+    pub struct AddCard {
+        pub token: CookieToken,
+        pub deck_name: String,
+        pub card_content: String,
+        pub is_black: bool,
+    }
+    impl actix::Message for AddCard {
+        type Result = Result<CardId, String>;
+    }
+
+    pub struct DelCard {
+        pub token: CookieToken,
+        pub deck_name: String,
+        pub card_id: CardId
+    }
+    impl actix::Message for DelCard {
+        type Result = Result<(), String>;
     }
 }
 
