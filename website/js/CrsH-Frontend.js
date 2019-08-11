@@ -73,10 +73,8 @@ function onNewRoundStarted() {
 	$("#cardRevealing").hide();
 	$("#handOfCards").show();
 	
-	$.each($("#handOfCards"), function(i, btn) {
-		btn.classList.remove("submittedCard");
-		btn.classList.remove("selectedCard");
-	});
+	$(".submittedCard").removeClass("submittedCard");
+	$(".selectedCard").removeClass("selectedCard");
 
 	if(isCzar()) {
 		$("#submitButton").attr("disabled", true);
