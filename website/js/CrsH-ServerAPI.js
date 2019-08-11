@@ -380,7 +380,7 @@ class ServerSocketConnection {
 				this.onRevealCard.dispatch(message);
 			break;
 			case "player_left":
-				if(!validateJsonProperty(jsonData, 'player_id', 'string', "PlayerLeft message received,")) { return; } 
+				if(!validateJsonProperty(jsonData, 'player_id', 'number', "PlayerLeft message received,")) { return; } 
 
 				var message = new incommingMessages.PlayerLeftMatch(jsonData["player_id"]);
 				this.onPlayerLeftMatch.dispatch(message);

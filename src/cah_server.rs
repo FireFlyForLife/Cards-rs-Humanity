@@ -678,7 +678,7 @@ impl Handler<messages::incomming::SubmitCard> for CahServer {
                         return;
                     }
                     let card = card_opt.unwrap();
-                    println!("room: {}. player: {} submitted the card: {:?}", room_name, &user_id, msg.card_id);
+                    println!("room: {}. player: {} submitted the card(id: {:?}, txt: {})", room_name, &user_id, msg.card_id, &card.content);
                     let room = self.matches.get_mut().unwrap().get_mut(&room_name).unwrap();
                     if let Some(pid_player) = room.players.iter_mut().find(|elem| elem.player.id == user_id) {
                         let _ = pid_player.submitted_card.get_or_insert(card);
@@ -687,7 +687,7 @@ impl Handler<messages::incomming::SubmitCard> for CahServer {
                     }
                     let everyone_submitted = room.has_everyone_submitted_card();
                     if everyone_submitted {
-                        let mut card_ids: Vec<CardId> = Vec::with_capacity(room.players.len()-2);
+                        let mut card_ids: Vec<CardId> = Vec::with_capacity(room.players.len()-1);
                         for player in &room.players {
                             if room.czar != player.player.id {
                                 //TODO: WTF Why do I need to clone the Option here? I just want to read a value from it???

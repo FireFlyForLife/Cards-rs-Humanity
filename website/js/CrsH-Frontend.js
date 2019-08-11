@@ -8,9 +8,12 @@
 
 // Variables:
 //type: HashMap<cardElement, cardId
-var cardElementToCardId = {}; 
-//type: HashMap<cardElement, cardId
 var revealedCardIdToElement = {};
+
+//type: UIElement
+var selectedCard = null;
+//type: number
+var selectedCardId = null;
 
 $(document).ready(function() {
 	$("#cardRevealing").hide();
@@ -75,6 +78,8 @@ function onNewRoundStarted() {
 	
 	$(".submittedCard").removeClass("submittedCard");
 	$(".selectedCard").removeClass("selectedCard");
+	selectedCard = null;
+	selectedCardId = null;
 
 	if(isCzar()) {
 		$("#submitButton").attr("disabled", true);
@@ -156,6 +161,8 @@ function onRevealOthersCard(msg) {
 		if(everythingRevealed) {
 			deselectCards();
 			selectCard(this);
+			selectedCard = this;
+			selectedCardId = id;
 		} else {
 			connection.sendRevealCard(new outgoingMessages.RevealCard(id));
 		}
@@ -216,7 +223,7 @@ function submitSelection() {
 		if (selectedCard === null) {
 			alert("No card is selected! please select one by clicking on it!");
 		} else {
-			var cardId = cardElementToCardId[selectedCard];
+			var cardId = selectedCardId;
 			if(cardId == null) {
 				console.error("Selected card: ", selectCard, "Doesn't have an id");
 				return;
@@ -248,12 +255,13 @@ function selectCard(whiteCard) {
 }
 
 function getSelectedCard() {
-	var whiteCards = document.getElementsByClassName("selectedCard");
-	if (whiteCards.length > 0) {
-		return whiteCards[0];
-	} else {
-		return null;
-	}
+	return selectedCard;
+	// var whiteCards = document.getElementsByClassName("selectedCard");
+	// if (whiteCards.length > 0) {
+	// 	return whiteCards[0];
+	// } else {
+	// 	return null;
+	// }
 }
 
 //overload gameplay callbacks to visualize it.
@@ -267,12 +275,13 @@ gameplayCallbacks.addWhiteCard = function(msg) {
 	card.classList.add("whiteCard");
 	var textNode = document.createTextNode(text);
 	card.appendChild(textNode);
-	cardElementToCardId[card] = cardId;
 
 	card.onclick = function () {
 		if (!hasSubmittedCard) {
 			deselectCards();
 			selectCard(this);
+			selectedCard = this;
+			selectedCardId = cardId;
 		}
 	}
 
