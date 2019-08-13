@@ -296,6 +296,78 @@ impl CardDeckCache {
             },
         }
     }
+
+    pub fn get_random_black_card(&self, active_decks: &Vec<String>) -> Option<Card> {
+        let mut weights = Vec::new();
+        for deck_name in active_decks {
+            if let Some(card_deck_rc) = self.decks.get(deck_name) {
+                let card_deck = &card_deck_rc.value;
+                weights.push(card_deck.black_cards.len());
+            }
+        }
+
+        let mut rng = thread_rng();
+        let distribution_result = WeightedIndex::new(weights.as_slice());
+        let deck_index = match distribution_result {
+            Ok(distribution) => {
+                distribution.sample(&mut rng)
+            },
+            Err(weighted_err) => { 
+                debug_assert!(false); 
+                println!("ERROR: Could not add a card to the hand!! {}", weighted_err);
+                return None;
+            }
+        };
+
+        let ref picked_deck_name = active_decks[deck_index];
+        let deck_ids_opt = &self.decks.get(picked_deck_name);
+        if let Some(ref deck_ids) = deck_ids_opt {
+            let local_card_index = rng.gen_range(0, deck_ids.value.black_cards.len());
+            let local_card_id = deck_ids.value.black_cards[local_card_index];
+            let card_content_opt = self.cards.get(&local_card_id);
+            if let Some(card_content) = card_content_opt {
+                return Some(Card{content: card_content.clone(), id: local_card_id.clone()});
+            }
+        }
+        
+        None
+    }
+
+    pub fn get_random_white_card(&self, active_decks: &Vec<String>) -> Option<Card> {
+        let mut weights = Vec::new();
+        for deck_name in active_decks {
+            if let Some(card_deck_rc) = self.decks.get(deck_name) {
+                let card_deck = &card_deck_rc.value;
+                weights.push(card_deck.white_cards.len());
+            }
+        }
+
+        let mut rng = thread_rng();
+        let distribution_result = WeightedIndex::new(weights.as_slice());
+        let deck_index = match distribution_result {
+            Ok(distribution) => {
+                distribution.sample(&mut rng)
+            },
+            Err(weighted_err) => { 
+                debug_assert!(false); 
+                println!("ERROR: Could not add a card to the hand!! {}", weighted_err);
+                return None;
+            }
+        };
+
+        let ref picked_deck_name = active_decks[deck_index];
+        let deck_ids_opt = &self.decks.get(picked_deck_name);
+        if let Some(ref deck_ids) = deck_ids_opt {
+            let local_card_index = rng.gen_range(0, deck_ids.value.white_cards.len());
+            let local_card_id = deck_ids.value.white_cards[local_card_index];
+            let card_content_opt = self.cards.get(&local_card_id);
+            if let Some(card_content) = card_content_opt {
+                return Some(Card{content: card_content.clone(), id: local_card_id.clone()});
+            }
+        }
+        
+        None
+    }
 }
 
 /// `CahServer`(Cards against humanity server) manages matches and responsible for coordinating
@@ -355,47 +427,18 @@ impl CahServer {
     }
 
     fn add_random_card(card_cache: &CardDeckCache, active_decks: &Vec<String>, player: &mut PlayerInMatch) {
-        // let card_cache = self.card_cache.read().unwrap();
-        
-        let mut weights = Vec::new();
-        for deck_name in active_decks {
-            if let Some(card_deck_rc) = card_cache.decks.get(deck_name) {
-                let card_deck = &card_deck_rc.value;
-                weights.push(card_deck.white_cards.len());
-            }
-        }
+        if let Some(card) = card_cache.get_random_white_card(active_decks) {
 
-        let mut rng = thread_rng();
-        let distribution_result = WeightedIndex::new(weights.as_slice());
-        let deck_index = match distribution_result {
-            Ok(distribution) => {
-                distribution.sample(&mut rng)
-            },
-            Err(weighted_err) => { 
-                debug_assert!(false); 
-                println!("ERROR: Could not add a card to the hand!! {}", weighted_err);
-                return;
-            }
-        };
+            player.cards.push(card.clone());
 
-        let ref picked_deck_name = active_decks[deck_index];
-        let deck_ids_opt = &card_cache.decks.get(picked_deck_name);
-        if let Some(ref deck_ids) = deck_ids_opt {
-            let local_card_index = rng.gen_range(0, deck_ids.value.white_cards.len());
-            let local_card_id = deck_ids.value.white_cards[local_card_index];
-            let card_content_opt = card_cache.cards.get(&local_card_id);
-            if let Some(card_content) = card_content_opt {
-                player.cards.push(Card{content: card_content.clone(), id: local_card_id});
+            if let Some(socket_actor) = player.socket_actor.clone() {
+                let json_msg = json!({
+                    "type": "addCardToHand",
+                    "card_id": card.id,
+                    "card_content": card.content.clone(),
+                });
 
-                if let Some(socket_actor) = player.socket_actor.clone() {
-                    let json_msg = json!({
-                        "type": "addCardToHand",
-                        "card_id": local_card_id,
-                        "card_content": card_content.clone(),
-                    });
-
-                    socket_actor.do_send(messages::outgoing::Message(json_msg.to_string()));
-                }
+                socket_actor.do_send(messages::outgoing::Message(json_msg.to_string()));
             }
         }
     }
@@ -691,6 +734,15 @@ impl Handler<messages::incomming::StartMatch> for CahServer {
                                     None => {}
                                 }
                             }
+
+                            if let Some(card) = self.card_cache.read().unwrap().get_random_black_card(&room.active_decks) {
+                                let json_msg = json!({
+                                    "type": "newBlack",
+                                    "card_id": card.id,
+                                    "card_content": card.content
+                                });
+                                room.send_to_all_players(messages::outgoing::Message(json_msg.to_string()))
+                            }
                         }
                     }
                 }
@@ -935,6 +987,17 @@ impl Handler<messages::incomming::CzarChoice> for CahServer {
                                             "type": "newRound"
                                         });
                                         room.send_to_all_players(messages::outgoing::Message(new_round_json.to_string()));
+
+                                        {
+                                            if let Some(card) = card_cache.get_random_black_card(&room.active_decks) {
+                                                let new_black_card_json = json!({
+                                                    "type": "newBlack",
+                                                    "card_id": card.id,
+                                                    "card_content": card.content
+                                                });
+                                                room.send_to_all_players( messages::outgoing::Message(new_black_card_json.to_string()) );
+                                            }
+                                        }
 
                                         let czar_index_opt = room.players.iter().position(|pim| &pim.player.id == &room.czar);
                                         match czar_index_opt {

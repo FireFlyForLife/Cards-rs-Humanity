@@ -106,6 +106,10 @@ var incommingMessages = {
 		this.deckName = deckName;
 		this.blackCards = blackCards;
 		this.whiteCards = whiteCards;
+	},
+	NewBlackCard: function(cardId, cardContent) {
+		this.cardId = cardId;
+		this.cardContent = cardContent;
 	}
 };
 
@@ -301,6 +305,7 @@ class ServerSocketConnection {
 		this.onPlayerWon = new signals.Signal();
 		this.onNewRound = new signals.Signal();
 		this.onNewCzar = new signals.Signal();
+		this.onNewBlackCard = new signals.Signal();
 	}
 
 	// @arg submitCard an instance of the type `outgoingMessages.SubmitCard`
@@ -425,6 +430,13 @@ class ServerSocketConnection {
 
 				var message = new incommingMessages.NewCzar(jsonData["czar"]);
 				this.onNewCzar.dispatch(message);
+			break;
+			case "newBlack":
+				if(!validateJsonProperty(jsonData, 'card_id', 'number', "NewBlackCard message received,")) { return; }
+				if(!validateJsonProperty(jsonData, 'card_content', 'string', "NewBlackCard message received,")) { return; }
+
+				var message = new incommingMessages.NewBlackCard(jsonData["card_id"], jsonData["card_content"]);
+				this.onNewBlackCard.dispatch(message);
 			break;
 			default:
 				console.error("Unknown message type send by server. Full JSON: " + JSON.stringify(jsonData));

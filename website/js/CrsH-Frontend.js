@@ -32,7 +32,8 @@ $(document).ready(function() {
 	connection.onPlayerWon.add(onPlayerWon);
 	connection.onNewCzar.add(onNewCzar);
 	connection.onMatchHasStarted.add(onMatchHasStarted);
-	connection.onRemoveCardFromHand.add(onRemoveCardFromHand)
+	connection.onRemoveCardFromHand.add(onRemoveCardFromHand);
+	connection.onNewBlackCard.add(onNewBlackCard);
 
 	//Create forms which don't redirect you to another page:
     $('#loginForm').ajaxForm({
@@ -90,6 +91,12 @@ function onNewRoundStarted() {
 	} else {
 		$("#submitButton").attr("disabled", false);
 	}
+}
+
+function onNewBlackCard(msg) {
+	var cardContent = msg.cardContent;
+
+	$("#blackCard").text(cardContent);
 }
 
 function onMatchHasStarted() {
