@@ -18,6 +18,9 @@ var selectedCardId = null;
 //type HashMap<cardId, cardContent>
 var cardIdToContent = {};
 
+//type: HashMap<playerId, pointAmount>
+var playerPoints = {};
+
 $(document).ready(function() {
 	$("#cardRevealing").hide();
 
@@ -30,6 +33,7 @@ $(document).ready(function() {
 	connection.onCzarCardChoice.add(onCzarCardChoiceReceived);
 	connection.onNewRound.add(onNewRoundStarted);
 	connection.onPlayerWon.add(onPlayerWon);
+	connection.onPlayerRoundWin.add(onPlayerRoundWin);
 	connection.onNewCzar.add(onNewCzar);
 	connection.onMatchHasStarted.add(onMatchHasStarted);
 	connection.onRemoveCardFromHand.add(onRemoveCardFromHand);
@@ -73,7 +77,7 @@ function renderUserList(){
 		var czarString = val.id == czarId ? " (czar)" : "";
 		var opString = i == 0 ? " (op)" : "";
 
-		$("#userList").append(val.name + czarString + opString + "<br>");
+		$("#userList").append(val.name + czarString + opString + "    Points => " + playerPoints[val.id] + "<br>");
 	});
 }
 
@@ -107,13 +111,25 @@ function onMatchHasStarted() {
 	}
 }
 
+function onPlayerRoundWin(msg) {
+	var playerId = msg.playerId;
+
+	if(playerPoints[playerId] === undefined) {
+		playerPoints[playerId] = 0;
+	}
+
+	playerPoints[playerId] += 1;
+
+	renderUserList();
+}
+
 function onPlayerWon(msg) {
 	var playerId = msg.playerId;
 
 	var playerName = userList.find(function(nameIdPair, i) {
 		return nameIdPair.id == playerId;
 	})
-	alert("player with the name: " + playerName + " has won the match!");
+	alert("player with the name: " + playerName.name + " has won the match!");
 }
 
 function onNewCzar(msg) {

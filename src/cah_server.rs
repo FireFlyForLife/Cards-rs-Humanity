@@ -947,11 +947,21 @@ impl Handler<messages::incomming::CzarChoice> for CahServer {
                         debug_assert!(victorious_player_opt.is_some());
                         if let Some(victorious_player) = victorious_player_opt {
                             victorious_player.points += 1;
+                            let victorious_player_id = victorious_player.player.id;
+                            let did_player_win = victorious_player.points >= room.points_to_win;
+                            {
+                                let player_won_round_json = json!({
+                                    "type": "roundWon",
+                                    "player_id": victorious_player_id,
+                                });
+                                room.send_to_all_players(messages::outgoing::Message(player_won_round_json.to_string()));
+                            }
 
-                            if victorious_player.points >= room.points_to_win {
+
+                            if did_player_win {
                                 let player_won_msg = json!({
                                     "type": "playerWon",
-                                    "player_id": victorious_player.player.id,
+                                    "player_id": victorious_player_id,
                                 });
                                 room.send_to_all_players(messages::outgoing::Message(player_won_msg.to_string()));
                             }

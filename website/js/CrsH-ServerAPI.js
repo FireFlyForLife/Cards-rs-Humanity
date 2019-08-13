@@ -92,6 +92,9 @@ var incommingMessages = {
 	PlayerWon: function(playerId) {
 		this.playerId = playerId;
 	},
+	PlayerRoundWin: function(playerId) {
+		this.playerId = playerId;
+	},
 	// A new round has started
 	NewRound: function() {
 	},
@@ -306,6 +309,7 @@ class ServerSocketConnection {
 		this.onNewRound = new signals.Signal();
 		this.onNewCzar = new signals.Signal();
 		this.onNewBlackCard = new signals.Signal();
+		this.onPlayerRoundWin = new signals.Signal();
 	}
 
 	// @arg submitCard an instance of the type `outgoingMessages.SubmitCard`
@@ -417,10 +421,16 @@ class ServerSocketConnection {
 				this.onCzarCardChoice.dispatch(message);
 			break;
 			case "playerWon":
-				if(!validateJsonProperty(jsonData, 'player_id', 'string', "PlayerWon message received,")) { return; }
+				if(!validateJsonProperty(jsonData, 'player_id', 'number', "PlayerWon message received,")) { return; }
 				
 				var message = new incommingMessages.PlayerWon(jsonData["player_id"]);
 				this.onPlayerWon.dispatch(message);
+			break;
+			case "roundWon":
+				if(!validateJsonProperty(jsonData, 'player_id', 'number', "PlayerRoundWin message received,")) { return; }
+
+				var message = new incommingMessages.PlayerRoundWin(jsonData["player_id"]);
+				this.onPlayerRoundWin.dispatch(message);
 			break;
 			case "newRound":
 				this.onNewRound.dispatch();
