@@ -86,6 +86,13 @@ function _addWhiteCard(msg) {
 	}
 }
 
+function _removeWhiteCard(msg) {
+	var cardId = msg.cardId;
+
+	var index = handOfCards.indexOf(cardId);
+	if (index !== -1) { handOfCards.splice(index, 1); }
+}
+
 function _newGameStateReceived(gameStateMessage) {
 	ourSelves = gameStateMessage.ourPlayer;
 
@@ -163,6 +170,7 @@ $(document).ready(function () {
 	connection.onNewRound.add(_newRoundStarts);
 	connection.onPlayerWon.add(_playerHasWon);
 	connection.onNewCzar.add(_newCzar);
+	connection.onRemoveCardFromHand.add(_removeWhiteCard);
 });
 
 function _playerHasWon(msg) {

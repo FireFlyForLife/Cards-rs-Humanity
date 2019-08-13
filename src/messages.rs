@@ -138,6 +138,13 @@ pub mod outgoing {
         pub card: Card
     }
 
+    #[derive(Message)]
+    pub struct RemoveCardFromHand {
+        pub room: String,
+        pub player: Player,
+        pub card: Card,
+    }
+
     // Send when someone joins your match
     #[derive(Message)]
     pub struct PlayerJoinedMatch {

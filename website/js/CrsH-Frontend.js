@@ -15,6 +15,9 @@ var selectedCard = null;
 //type: number
 var selectedCardId = null;
 
+//type HashMap<cardId, cardContent>
+var cardIdToContent = {};
+
 $(document).ready(function() {
 	$("#cardRevealing").hide();
 
@@ -29,6 +32,7 @@ $(document).ready(function() {
 	connection.onPlayerWon.add(onPlayerWon);
 	connection.onNewCzar.add(onNewCzar);
 	connection.onMatchHasStarted.add(onMatchHasStarted);
+	connection.onRemoveCardFromHand.add(onRemoveCardFromHand)
 
 	//Create forms which don't redirect you to another page:
     $('#loginForm').ajaxForm({
@@ -264,28 +268,49 @@ function getSelectedCard() {
 	// }
 }
 
+function renderHandOfCards() {
+	$("#handOfCards").html("");
+
+	$.each(handOfCards, function(i, val) {
+		var cardId = val;
+		var text = cardIdToContent[cardId];
+
+		/* Create a card like this:
+		<div class="whiteCard">The text of the card</div>
+		*/
+		var card = document.createElement('div');
+		card.classList.add("whiteCard");
+		var textNode = document.createTextNode(text);
+		card.appendChild(textNode);
+
+		card.onclick = function () {
+			if (!hasSubmittedCard) {
+				deselectCards();
+				selectCard(this);
+				selectedCard = this;
+				selectedCardId = cardId;
+			}
+		}
+
+		$("#handOfCards").append(card);
+	});
+}
+
+function onRemoveCardFromHand(msg) {
+	var cardId = msg.cardId;
+	delete handOfCards[cardId];
+
+	renderHandOfCards();
+}
+
 //overload gameplay callbacks to visualize it.
 gameplayCallbacks.addWhiteCard = function(msg) {
 	var text = msg.cardContent;
 	var cardId = msg.cardId;
-	/* Create a card like this:
-		<div class="whiteCard">The text of the card</div>
-	*/
-	var card = document.createElement('div');
-	card.classList.add("whiteCard");
-	var textNode = document.createTextNode(text);
-	card.appendChild(textNode);
 
-	card.onclick = function () {
-		if (!hasSubmittedCard) {
-			deselectCards();
-			selectCard(this);
-			selectedCard = this;
-			selectedCardId = cardId;
-		}
-	}
+	cardIdToContent[cardId] = text;
 
-	$("#handOfCards").append(card);
+	renderHandOfCards();
 };
 
 gameplayCallbacks.matchListReceived = function(matchList) {

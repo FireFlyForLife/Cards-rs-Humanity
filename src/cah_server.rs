@@ -20,6 +20,11 @@ use crate::CookieToken;
 use crate::messages;
 use crate::db;
 
+use rand::distributions::WeightedIndex;
+use rand::distributions::Distribution;
+use rand::thread_rng;
+use rand::Rng;
+
 use sha2::Sha512;
 use sha2::Digest;
 use generic_array::GenericArray;
@@ -43,7 +48,7 @@ type ShaImpl = Sha512;
 pub const PASSWORD_HASH_BYTE_SIZE: usize = 64;
 pub type PasswordHash = GenericArray<u8, <ShaImpl as Digest>::OutputSize>;
 
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Card {
     pub content: String,
     pub id: CardId,
@@ -224,13 +229,19 @@ impl<T: Clone> WithCounter<T> {
     }
 }
 
+#[derive(Default, Clone, Debug)]
+pub struct DeckCardIds {
+    pub black_cards: Vec<CardId>,
+    pub white_cards: Vec<CardId>
+}
+
 // An in memory cache of all decks in use across all matches
 #[derive(Default)]
 pub struct CardDeckCache{
     // All the cards in use at the moment
     cards: HashMap<CardId, String>,
     // Decks name to card id vector
-    decks: HashMap<String, WithCounter<Vec<CardId>> >,
+    decks: HashMap<String, WithCounter<DeckCardIds> >,
 }
 impl CardDeckCache {
     pub fn get_card(&self, card_id: CardId) -> Option<Card> {
@@ -244,16 +255,16 @@ impl CardDeckCache {
         let deck_entry = self.decks.entry(deck.deck_name.clone());
         match deck_entry {
             Entry::Occupied(mut occupied_entry) => { occupied_entry.get_mut().increment_counter(); },
-            Entry::Vacant(vacant_entry) => { 
-                let mut card_ids = Vec::with_capacity(deck.black_cards.len() + deck.white_cards.len());
+            Entry::Vacant(vacant_entry) => {
+                let mut card_ids = DeckCardIds{black_cards: Vec::with_capacity(deck.black_cards.len()), white_cards: Vec::with_capacity(deck.white_cards.len())};
                 for card in &deck.black_cards {
-                    card_ids.push(card.id.clone());
+                    card_ids.black_cards.push(card.id.clone());
                     let old_val_opt = self.cards.insert(card.id.clone(), card.content.clone());
                     debug_assert!(old_val_opt.is_none(), 
                         "We should never override a pair here because the card_id should be unique. And we ref count our loaded decks.");
                 }
                 for card in &deck.white_cards {
-                    card_ids.push(card.id.clone());
+                    card_ids.white_cards.push(card.id.clone());
                     let old_val_opt = self.cards.insert(card.id.clone(), card.content.clone());
                     debug_assert!(old_val_opt.is_none(), 
                         "We should never override a pair here because the card_id should be unique. And we ref count our loaded decks.");
@@ -271,7 +282,7 @@ impl CardDeckCache {
                 let should_be_removed = occupied_entry.get_mut().decrement_counter();
                 if should_be_removed {
                     let (_deck_name, card_ids) = occupied_entry.remove_entry();
-                    for card_id in card_ids.value {
+                    for card_id in card_ids.value.black_cards.iter().chain(card_ids.value.white_cards.iter()) {
                         let card_content = self.cards.remove(&card_id);
                         debug_assert!(card_content.is_some(), 
                             "Somehow our decks vector is refering to cards that don't exist in the cache");
@@ -340,6 +351,52 @@ impl CahServer {
         match self.sessions.read().unwrap().get(cookie_token) {
             Some(uuid) => Some(uuid.clone()),
             None => None,
+        }
+    }
+
+    fn add_random_card(card_cache: &CardDeckCache, active_decks: &Vec<String>, player: &mut PlayerInMatch) {
+        // let card_cache = self.card_cache.read().unwrap();
+        
+        let mut weights = Vec::new();
+        for deck_name in active_decks {
+            if let Some(card_deck_rc) = card_cache.decks.get(deck_name) {
+                let card_deck = &card_deck_rc.value;
+                weights.push(card_deck.white_cards.len());
+            }
+        }
+
+        let mut rng = thread_rng();
+        let distribution_result = WeightedIndex::new(weights.as_slice());
+        let deck_index = match distribution_result {
+            Ok(distribution) => {
+                distribution.sample(&mut rng)
+            },
+            Err(weighted_err) => { 
+                debug_assert!(false); 
+                println!("ERROR: Could not add a card to the hand!! {}", weighted_err);
+                return;
+            }
+        };
+
+        let ref picked_deck_name = active_decks[deck_index];
+        let deck_ids_opt = &card_cache.decks.get(picked_deck_name);
+        if let Some(ref deck_ids) = deck_ids_opt {
+            let local_card_index = rng.gen_range(0, deck_ids.value.white_cards.len());
+            let local_card_id = deck_ids.value.white_cards[local_card_index];
+            let card_content_opt = card_cache.cards.get(&local_card_id);
+            if let Some(card_content) = card_content_opt {
+                player.cards.push(Card{content: card_content.clone(), id: local_card_id});
+
+                if let Some(socket_actor) = player.socket_actor.clone() {
+                    let json_msg = json!({
+                        "type": "addCardToHand",
+                        "card_id": local_card_id,
+                        "card_content": card_content.clone(),
+                    });
+
+                    socket_actor.do_send(messages::outgoing::Message(json_msg.to_string()));
+                }
+            }
         }
     }
 }
@@ -620,14 +677,14 @@ impl Handler<messages::incomming::StartMatch> for CahServer {
                             let msg_json = json!({
                                 "type": "matchStarted",
                             });
-                            for every_player in &room.players {
+                            for every_player in &mut room.players {
                                 match &every_player.socket_actor{
                                     Some(socket_actor) => {
                                         socket_actor.do_send(messages::outgoing::Message( msg_json.to_string() ));
 
                                         let random_cards: Vec<_> = default_card_deck.white_cards.choose_multiple(&mut rand::thread_rng(), 3).collect();
                                         for card in random_cards{
-                                            // let card = Card{content: card_content.clone(), id: 0};
+                                            every_player.cards.push(card.clone());
                                             ctx.address().do_send(messages::outgoing::AddCardToHand{room: msg.match_name.clone(), player: every_player.player.clone(), card: card.clone()});
                                         }
                                     },
@@ -849,9 +906,28 @@ impl Handler<messages::incomming::CzarChoice> for CahServer {
 
                             ctx.run_later(Duration::from_millis(3000), move |cah, _ctx| {
                                 let matches = cah.matches.get_mut().unwrap();
+                                let card_cache = cah.card_cache.read().unwrap();
                                 match matches.get_mut(&msg.match_name) {
                                     Some(room) => { 
                                         for player_in_match in &mut room.players {
+                                            if player_in_match.player.id != room.czar {
+                                                if let Some(submitted_card) = player_in_match.submitted_card.clone() {
+                                                    if let Some(card_pos) = player_in_match.cards.iter().position(|card| card.id == submitted_card.id) {
+                                                        if let Some(socket_connection) = player_in_match.socket_actor.clone() {
+                                                            let msg_json = json!({
+                                                                "type": "removeCard",
+                                                                "card_id": player_in_match.cards[card_pos].id
+                                                            });
+                                                            let msg_json_string = msg_json.to_string();
+                                                            socket_connection.do_send( messages::outgoing::Message(msg_json_string) );
+                                                        }
+
+                                                        player_in_match.cards.remove(card_pos);
+                                                        CahServer::add_random_card(&card_cache, &room.active_decks, player_in_match);
+                                                    }
+                                                }
+                                            }
+
                                             player_in_match.submitted_card = None;
                                         }
 

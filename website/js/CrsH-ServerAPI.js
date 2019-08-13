@@ -34,6 +34,9 @@ var incommingMessages = {
 	AddCardToHand: function(cardContent, cardId) {
 		this.cardContent = cardContent;
 		this.cardId = cardId;
+	}, 
+	RemoveCardFromHand: function(cardId) {
+		this.cardId = cardId;
 	},
 	//This message is also send for the current player. along with all other players
 	PlayerSubmittedCard: function(userUuid, cardId) {
@@ -285,6 +288,7 @@ class ServerSocketConnection {
 		this._socketConnection = null;
 
 		this.onAddCardToHand = new signals.Signal();
+		this.onRemoveCardFromHand = new signals.Signal();
 		this.onPlayerSubmittedCard = new signals.Signal();
 		this.onEveryoneSubmittedCards = new signals.Signal();
 		this.onRevealCard = new signals.Signal();
@@ -365,6 +369,12 @@ class ServerSocketConnection {
 
 				var message = new incommingMessages.AddCardToHand(jsonData["card_content"], jsonData["card_id"]);
 				this.onAddCardToHand.dispatch(message);
+			break;
+			case "removeCard":
+				if(!validateJsonProperty(jsonData, 'card_id', 'number', "RemoveCardFromhand message received,")) { return; }
+
+				var message = new incommingMessages.RemoveCardFromHand(jsonData["card_id"]);
+				this.onRemoveCardFromHand.dispatch(message);
 			break;
 			case "everyone_submitted":
 				if(!validateJsonProperty(jsonData, 'card_ids', 'array', "EveryoneSubmittedCards message received,")) { return; }
